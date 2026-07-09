@@ -17,9 +17,13 @@
 
 ## 设计方案
 
-### 方案选择：A — PluginPage.from_url()
+### 方案选择：A — PluginPage.from_url()（最初方案，已废弃）
 
-最简方案，利用 KiraAI 内置的 `PluginPage.from_url()` 机制。
+最初采用 `PluginPage.from_url()`，但 URL 在插件初始化时固定，用户改配置后不生效。
+
+### 最终方案：PluginPage.from_html() + API 端点
+
+改用 `from_html()` 返回一个内含 JavaScript 的轻量 HTML 页面，通过调用插件 API 端点实时获取当前配置的 WebUI URL（含 token），再在 iframe 中加载 NapCat WebUI。
 
 ### 详细设计
 
@@ -27,51 +31,52 @@
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `ws_url` | `string` | `"ws://127.0.0.1:8081"` | NapCat OneBot WebSocket 地址 |
-| `http_url` | `string` | `"http://127.0.0.1:3000"` | NapCat OneBot HTTP API 地址 |
-| `access_token` | `string` | `""` | OneBot API 访问令牌 |
-| `bot_qq` | `string` | `""` | 机器人 QQ 号 |
 | `webui_url` | `string` | `"http://127.0.0.1:6099"` | NapCat WebUI 访问地址 |
 | `webui_token` | `string` | `""` | WebUI 登录 token |
-| `reconnect_interval` | `int` | `5` | 断线重连间隔（秒） |
-| `max_reconnect_retries` | `int` | `0` | 最大重连次数（0=无限） |
-| `debug_logging` | `switch` | `false` | DEBUG 日志 |
 
-#### 2. 页面注册（main.py）
+#### 2. API 端点
+
+注册 `GET /api/plugin/napcat_connector/redirect`：
 
 ```python
-@register.page(
-    "/napcat",
-    menu=PageMenu(
-        label={"zh": "NapCat 控制台", "en": "NapCat Console"},
-        icon="Monitor",
-        order=10,
-    ),
-    auth=True,
-)
-def napcat_page(self):
-    url = self.webui_url.rstrip("/")
-    if self.webui_token:
-        url += f"?token={self.webui_token}"
-    return PluginPage.from_url(url)
+@register.api("GET", "/redirect", auth=True)
+def get_redirect_url(self):
+    url = self.plugin_cfg.get("webui_url", "").rstrip("/")
+    if not url:
+        return {"url": "", "error": "webui_url 未配置"}
+    token = self.plugin_cfg.get("webui_token", "")
+    if token:
+        url += f"?token={token}"
+    return {"url": url}
 ```
 
-#### 3. 工作流程
+#### 3. 页面注册（main.py）
+
+```python
+@register.page("/napcat", ...)
+def napcat_page(self):
+    html = "<!DOCTYPE html>..."  # JS 调用 API → iframe
+    return PluginPage.from_html(html)
+```
+
+#### 4. 工作流程
 
 ```
 用户点击「NapCat 控制台」
     ↓
-Vue Router 导航到 /plugin-page/napcat_connector/napcat
+Vue Router → PluginPageView.vue → <iframe src="/page/plugin/napcat_connector/napcat">
     ↓
-PluginPageView.vue 创建 <iframe src="/page/plugin/napcat_connector/napcat">
+KiraAI 后端返回 HTML 页面（静态）
     ↓
-KiraAI 后端处理 GET /page/plugin/napcat_connector/napcat
+HTML 中的 JS fetch('/api/plugin/napcat_connector/redirect')
     ↓
-调用 napcat_page() → 生成 URL: http://napcat-host:6099/?token=xxx
+API 端点从 self.plugin_cfg 实时读取 webui_url + webui_token
     ↓
-返回 302 Redirect → Location: http://napcat-host:6099/?token=xxx
+返回 {"url": "http://napcat:6099/?token=xxx"}
     ↓
-iframe 跟随重定向 → 加载 NapCat WebUI → 自动登录
+JS 创建 <iframe src="http://napcat:6099/?token=xxx">
+    ↓
+NapCat WebUI 加载 → 自动登录（token 在 URL 中）
 ```
 
 #### 4. 安全考量
