@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import re
 import httpx
 from fastapi import Request, Response
 from core.plugin import BasePlugin, PluginContext, register, PageMenu, PluginPage, logger
@@ -15,10 +16,11 @@ from core.plugin import BasePlugin, PluginContext, register, PageMenu, PluginPag
 PROXY_PREFIX = "/api/plugin/napcat_connector/proxy"
 NAPCAT_BASE = "http://127.0.0.1:6099"
 
-# 需要路径重写的路径前缀映射
+# 路径重写规则：(正则, 替换后)
+# 只匹配路径开头的 /webui/ 或 /api/（前面是引号、等号、括号、空格或开头）
 REWRITE_RULES = [
-    ("/webui/", f"{PROXY_PREFIX}/webui/"),
-    ('"/api/', f'"{PROXY_PREFIX}/api/'),
+    (re.compile(r'(["\'(=\s])/webui/'), rf'\1{PROXY_PREFIX}/webui/'),
+    (re.compile(r'(["\'(=\s])/api/'),   rf'\1{PROXY_PREFIX}/api/'),
 ]
 
 
@@ -106,10 +108,8 @@ class NapcatConnectorPlugin(BasePlugin):
         headers = dict(resp.headers)
         if "location" in headers:
             loc = headers["location"]
-            for old, new in REWRITE_RULES:
-                if loc.startswith(old.rstrip('"')):
-                    loc = loc.replace(old.rstrip('"'), new.rstrip('"'))
-                    break
+            for pattern, replacement in REWRITE_RULES:
+                loc = pattern.sub(replacement, loc)
             headers["location"] = loc
 
         # 剥离安全头，允许 iframe 嵌套
@@ -123,8 +123,8 @@ class NapcatConnectorPlugin(BasePlugin):
                                             "application/javascript",
                                             "text/css", "application/json"]):
             body_str = body.decode("utf-8", errors="replace")
-            for old, new in REWRITE_RULES:
-                body_str = body_str.replace(old, new)
+            for pattern, replacement in REWRITE_RULES:
+                body_str = pattern.sub(replacement, body_str)
             body = body_str.encode("utf-8")
 
         return Response(
