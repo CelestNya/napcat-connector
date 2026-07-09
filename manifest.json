@@ -1,0 +1,16 @@
+{
+    "display_name": "NapCat Connector",
+    "plugin_id": "napcat_connector",
+    "version": "0.1.0",
+    "author": "CelestNya",
+    "description": "NapCatQQ 适配器连接器：通过 OneBot 协议连接 NapCatQQ，支持 QQ 消息收发与事件处理",
+    "repo": "https://github.com/CelestNya/napcat-connector",
+    "core_version": ">=v2.0.0",
+    "tags": ["napcat", "onebot", "qq", "adapter", "connector"],
+    "locales": {
+        "zh": {
+            "display_name": "NapCat 连接器",
+            "description": "NapCatQQ 适配器连接器：通过 OneBot 协议连接 NapCatQQ，支持 QQ 消息收发与事件处理"
+        }
+    }
+}
