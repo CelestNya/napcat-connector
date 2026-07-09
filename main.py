@@ -113,9 +113,12 @@ class NapcatConnectorPlugin(BasePlugin):
                 loc = PROXY_PREFIX + loc
             headers["location"] = loc
 
-        # 剥离安全头，允许 iframe 嵌套
+        # 剥离不应该透传的响应头
         headers.pop("x-frame-options", None)
         headers.pop("content-security-policy", None)
+        headers.pop("content-encoding", None)   # httpx 已自动解压
+        headers.pop("transfer-encoding", None)  # Starlette 自动处理
+        headers.pop("content-length", None)     # 响应体可能被重写，长度会变
 
         # 重写响应体路径
         body = resp.content
