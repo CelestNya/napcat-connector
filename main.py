@@ -103,12 +103,12 @@ class NapcatConnectorPlugin(BasePlugin):
                     status_code=502,
                 )
 
-        # 重写响应头中的 Location
+        # 重写响应头中的 Location（先替 /api/ 再替 /webui/，顺序不可反）
         headers = dict(resp.headers)
         if "location" in headers:
             loc = headers["location"]
-            loc = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, loc)
             loc = REWRITE_API.sub(REWRITE_API_REPL, loc)
+            loc = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, loc)
             headers["location"] = loc
 
         # 剥离安全头，允许 iframe 嵌套
@@ -127,11 +127,11 @@ class NapcatConnectorPlugin(BasePlugin):
             # HTML 里只有 /webui/ 路径（资源引用）
             body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
         elif any(t in content_type for t in ["javascript", "text/css"]):
-            # JS/CSS 里 /webui/ 和 /api/ 路径都需要重写
-            body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
+            # JS/CSS：先替 /api/ 再替 /webui/（PROXY_PREFIX 含 /api/，顺序不可反）
             body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
+            body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
         elif "application/json" in content_type:
-            # JSON 也可能含路径
+            # JSON
             body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
             body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
 
