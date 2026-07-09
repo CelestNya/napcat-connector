@@ -42,20 +42,23 @@ class NapcatConnectorPlugin(BasePlugin):
     async def get_redirect_url(self):
         """
         API 端点：返回 NapCat WebUI 的完整 URL（含 token）。
-        每次请求从 self.plugin_cfg 实时读取配置。
-        auth=False 因为此端点被 PluginPageView 的 iframe 调用，
-        iframe 内无法发送 Authorization 头，且 cookie 的 SameSite
-        策略可能在 iframe 上下文中被阻止。
+        NapCat 的 redirect 链：
+            /?token=xxx → 301 → /webui（token 丢失）
+            /webui?token=xxx → 301 → /webui/?token=xxx（token 保留）
+        所以必须访问 /webui?token=xxx 而非 /?token=xxx
+        才能让 token 存活到 SPA 加载后自动登录。
         """
-        url = self.plugin_cfg.get("webui_url", "").rstrip("/")
-        if not url:
-            logger.warning("NapCat WebUI URL 未配置")
+        base = self.plugin_cfg.get("webui_url", "").rstrip("/")
+        if not base:
             return {"url": "", "error": "webui_url 未配置"}
         token = self.plugin_cfg.get("webui_token", "")
+        # 确保 URL 路径包含 /webui，使 token 通过 NapCat 的 redirect 链
+        if not base.endswith("/webui"):
+            base += "/webui"
         if token:
-            url += f"?token={token}"
-        logger.info(f"返回 NapCat WebUI 链接: {url}")
-        return {"url": url}
+            base += f"?token={token}"
+        logger.info(f"返回 NapCat WebUI 链接: {base}")
+        return {"url": base}
 
     @register.page(
         "/napcat",
