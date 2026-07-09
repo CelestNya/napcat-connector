@@ -80,17 +80,13 @@ class NapcatConnectorPlugin(BasePlugin):
 
         logger.info(f"[代理] {method} {target_url}")
 
-        # 构建转发请求头
-        forward_headers = {
-            "User-Agent": request.headers.get(
-                "user-agent", "Mozilla/5.0 KiraAI-Plugin/1.0"
-            ),
-        }
-        accept = request.headers.get("accept")
-        if accept:
-            forward_headers["Accept"] = accept
-        if content_type_header:
-            forward_headers["Content-Type"] = content_type_header
+        # 转发请求头：透传客户端的头（Authorization/Cookie 等），排除 hop-by-hop 头
+        skip_headers = {"host", "content-length", "transfer-encoding",
+                        "connection", "x-frame-options", "content-security-policy"}
+        forward_headers = {}
+        for key, val in request.headers.items():
+            if key.lower() not in skip_headers:
+                forward_headers[key] = val
 
         async with httpx.AsyncClient(timeout=30) as client:
             try:
