@@ -103,12 +103,14 @@ class NapcatConnectorPlugin(BasePlugin):
                     status_code=502,
                 )
 
-        # 重写响应头中的 Location（先替 /api/ 再替 /webui/，顺序不可反）
+        # 重写 Location 头（简单前缀匹配，Locations 是裸路径）
         headers = dict(resp.headers)
         if "location" in headers:
             loc = headers["location"]
-            loc = REWRITE_API.sub(REWRITE_API_REPL, loc)
-            loc = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, loc)
+            if loc.startswith("/webui"):
+                loc = PROXY_PREFIX + loc
+            elif loc.startswith("/api/"):
+                loc = PROXY_PREFIX + loc
             headers["location"] = loc
 
         # 剥离安全头，允许 iframe 嵌套
