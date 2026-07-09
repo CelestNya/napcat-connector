@@ -135,6 +135,13 @@ class NapcatConnectorPlugin(BasePlugin):
             body_str = body.decode("utf-8", errors="replace")
             if "text/html" in content_type:
                 body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
+                # 注入 localStorage namespace 脚本，避免与 KiraAI 的同源冲突
+                ns_script = """<script>
+(function(){var k="napcat_",P=Storage.prototype,G=P.getItem,S=P.setItem,R=P.removeItem;
+P.getItem=function(n){return G.call(this,k+n)};P.setItem=function(n,v){S.call(this,k+n,v)};
+P.removeItem=function(n){R.call(this,k+n)}})();
+</script>"""
+                body_str = body_str.replace("<head>", "<head>" + ns_script)
             elif any(t in content_type for t in ["javascript", "text/css"]):
                 body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
                 body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
