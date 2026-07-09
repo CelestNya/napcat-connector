@@ -57,9 +57,6 @@ class NapcatConnectorPlugin(BasePlugin):
             base += "/webui"
         if token:
             base += f"?token={token}"
-        # 日志脱敏：只记 URL 不记 token
-        log_url = base.split("?")[0] if "?" in base else base
-        logger.info(f"返回 NapCat WebUI 链接: {log_url}")
         return {"url": base}
 
     @register.page(
