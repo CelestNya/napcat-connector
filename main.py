@@ -16,12 +16,11 @@ from core.plugin import BasePlugin, PluginContext, register, PageMenu, PluginPag
 PROXY_PREFIX = "/api/plugin/napcat_connector/proxy"
 NAPCAT_BASE = "http://127.0.0.1:6099"
 
-# 路径重写规则：(正则, 替换后)
-# 只匹配路径开头的 /webui/ 或 /api/（前面是引号、等号、括号、空格或开头）
-REWRITE_RULES = [
-    (re.compile(r'(["\'(=\s])/webui/'), rf'\1{PROXY_PREFIX}/webui/'),
-    (re.compile(r'(["\'(=\s])/api/'),   rf'\1{PROXY_PREFIX}/api/'),
-]
+# 路径重写规则：分 content-type 应用
+REWRITE_WEBUI = re.compile(r'(["\'(=\s])/webui/')
+REWRITE_WEBUI_REPL = rf'\1{PROXY_PREFIX}/webui/'
+REWRITE_API = re.compile(r'(["\'(=\s])/api/')
+REWRITE_API_REPL = rf'\1{PROXY_PREFIX}/api/'
 
 
 class NapcatConnectorPlugin(BasePlugin):
@@ -108,24 +107,35 @@ class NapcatConnectorPlugin(BasePlugin):
         headers = dict(resp.headers)
         if "location" in headers:
             loc = headers["location"]
-            for pattern, replacement in REWRITE_RULES:
-                loc = pattern.sub(replacement, loc)
+            loc = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, loc)
+            loc = REWRITE_API.sub(REWRITE_API_REPL, loc)
             headers["location"] = loc
 
         # 剥离安全头，允许 iframe 嵌套
         headers.pop("x-frame-options", None)
         headers.pop("content-security-policy", None)
 
-        # 重写响应体（仅 HTML/JS/CSS）
+        # 重写响应体路径
         body = resp.content
         content_type = resp.headers.get("content-type", "")
-        if any(t in content_type for t in ["text/html", "text/javascript",
-                                            "application/javascript",
-                                            "text/css", "application/json"]):
-            body_str = body.decode("utf-8", errors="replace")
-            for pattern, replacement in REWRITE_RULES:
-                body_str = pattern.sub(replacement, body_str)
-            body = body_str.encode("utf-8")
+        if not content_type:
+            return Response(content=body, status_code=resp.status_code, headers=headers)
+
+        body_str = body.decode("utf-8", errors="replace")
+
+        if "text/html" in content_type:
+            # HTML 里只有 /webui/ 路径（资源引用）
+            body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
+        elif any(t in content_type for t in ["javascript", "text/css"]):
+            # JS/CSS 里 /webui/ 和 /api/ 路径都需要重写
+            body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
+            body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
+        elif "application/json" in content_type:
+            # JSON 也可能含路径
+            body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
+            body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
+
+        body = body_str.encode("utf-8")
 
         return Response(
             content=body,
