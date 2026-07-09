@@ -34,7 +34,7 @@ class NapcatConnectorPlugin(BasePlugin):
         pass
 
     @register.api("GET", "/redirect", auth=True, summary="获取 NapCat WebUI 跳转地址")
-    def get_redirect_url(self):
+    async def get_redirect_url(self):
         """
         API 端点：返回 NapCat WebUI 的完整 URL（含 token）。
         每次请求都从 self.plugin_cfg 实时读取，配置更改后立即可用。
