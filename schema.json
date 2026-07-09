@@ -1,0 +1,47 @@
+{
+    "ws_url": {
+        "type": "string",
+        "default": "ws://127.0.0.1:8081",
+        "hint": "NapCatQQ OneBot WebSocket 地址"
+    },
+    "http_url": {
+        "type": "string",
+        "default": "http://127.0.0.1:3000",
+        "hint": "NapCatQQ OneBot HTTP API 地址"
+    },
+    "access_token": {
+        "type": "string",
+        "default": "",
+        "hint": "OneBot API 访问令牌（可选）"
+    },
+    "bot_qq": {
+        "type": "string",
+        "default": "",
+        "hint": "机器人 QQ 号，留空自动检测"
+    },
+    "webui_url": {
+        "type": "string",
+        "default": "http://127.0.0.1:6099",
+        "hint": "NapCat WebUI 访问地址"
+    },
+    "webui_token": {
+        "type": "string",
+        "default": "",
+        "hint": "WebUI 登录 token（留空不传 token）"
+    },
+    "reconnect_interval": {
+        "type": "int",
+        "default": 5,
+        "hint": "断线重连间隔（秒）"
+    },
+    "max_reconnect_retries": {
+        "type": "int",
+        "default": 0,
+        "hint": "最大重连次数（0=无限）"
+    },
+    "debug_logging": {
+        "type": "switch",
+        "default": false,
+        "hint": "开启 DEBUG 级别日志"
+    }
+}
