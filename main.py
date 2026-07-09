@@ -61,49 +61,51 @@ class NapcatConnectorPlugin(BasePlugin):
 
     async def _proxy(self, method: str, path: str, request: Request) -> Response:
         """代理核心逻辑"""
-        # 如果 path 为空，默认为 webui/
         if not path:
             path = "webui/"
 
         target_url = f"{NAPCAT_BASE}/{path.lstrip('/')}"
 
-        # 获取请求体（POST 时）
+        # POST 时读取请求体，并转发 content-type
         body = None
+        content_type_header = request.headers.get("content-type")
         if method == "POST":
             body = await request.body()
 
-        # 从配置读取 token，注入到 URL
+        # 只在首页加载时传 token
         token = self.plugin_cfg.get("webui_token", "")
-        separator = "&" if "?" in target_url else "?"
-        if token and "token=" not in target_url:
+        if token and "token=" not in target_url and ("webui" in path or path == ""):
+            separator = "&" if "?" in target_url else "?"
             target_url += f"{separator}token={token}"
 
         logger.info(f"[代理] {method} {target_url}")
 
-        # 转发请求到 NapCat
+        # 构建转发请求头
+        forward_headers = {
+            "User-Agent": request.headers.get(
+                "user-agent", "Mozilla/5.0 KiraAI-Plugin/1.0"
+            ),
+        }
+        accept = request.headers.get("accept")
+        if accept:
+            forward_headers["Accept"] = accept
+        if content_type_header:
+            forward_headers["Content-Type"] = content_type_header
+
         async with httpx.AsyncClient(timeout=30) as client:
             try:
                 resp = await client.request(
                     method=method,
                     url=target_url,
                     content=body,
-                    headers={
-                        "Accept": request.headers.get("accept", "*/*"),
-                        "User-Agent": request.headers.get(
-                            "user-agent",
-                            "Mozilla/5.0 KiraAI-Plugin/1.0",
-                        ),
-                    },
-                    follow_redirects=False,  # 自己处理跳转
+                    headers=forward_headers,
+                    follow_redirects=False,
                 )
             except httpx.RequestError as e:
                 logger.error(f"代理请求失败: {e}")
-                return Response(
-                    content=f"Proxy error: {e}",
-                    status_code=502,
-                )
+                return Response(content=f"Proxy error: {e}", status_code=502)
 
-        # 重写 Location 头（简单前缀匹配，Locations 是裸路径）
+        # 重写 Location 头
         headers = dict(resp.headers)
         if "location" in headers:
             loc = headers["location"]
@@ -113,38 +115,37 @@ class NapcatConnectorPlugin(BasePlugin):
                 loc = PROXY_PREFIX + loc
             headers["location"] = loc
 
-        # 剥离不应该透传的响应头
+        # 剥离不兼容的响应头
         headers.pop("x-frame-options", None)
         headers.pop("content-security-policy", None)
-        headers.pop("content-encoding", None)   # httpx 已自动解压
-        headers.pop("transfer-encoding", None)  # Starlette 自动处理
-        headers.pop("content-length", None)     # 响应体可能被重写，长度会变
+        headers.pop("content-encoding", None)
+        headers.pop("transfer-encoding", None)
+        headers.pop("content-length", None)
 
-        # 重写响应体路径
         body = resp.content
         content_type = resp.headers.get("content-type", "")
-        if not content_type:
-            return Response(content=body, status_code=resp.status_code, headers=headers)
 
-        body_str = body.decode("utf-8", errors="replace")
-
-        if "text/html" in content_type:
-            # HTML 里只有 /webui/ 路径（资源引用）
-            body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
-        elif any(t in content_type for t in ["javascript", "text/css"]):
-            # JS/CSS：先替 /api/ 再替 /webui/（PROXY_PREFIX 含 /api/，顺序不可反）
-            body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
-            body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
-        elif "application/json" in content_type:
-            # JSON
-            body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
-            body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
-
-        body = body_str.encode("utf-8")
+        # 只对文本类内容做路径重写，二进制内容（图片/字体/音视频）透传
+        needs_rewrite = any(
+            t in content_type
+            for t in ["text/html", "text/javascript", "application/javascript",
+                      "text/css", "application/json"]
+        )
+        if needs_rewrite:
+            body_str = body.decode("utf-8", errors="replace")
+            if "text/html" in content_type:
+                body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
+            elif any(t in content_type for t in ["javascript", "text/css"]):
+                body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
+                body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
+            elif "application/json" in content_type:
+                body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
+                body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
+            body = body_str.encode("utf-8")
 
         return Response(
             content=body,
             status_code=resp.status_code,
             headers=headers,
-            media_type=resp.headers.get("content-type"),
+            media_type=content_type or None,
         )
