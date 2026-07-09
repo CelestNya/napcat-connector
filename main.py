@@ -9,7 +9,6 @@ from pathlib import Path
 # 确保插件包可被发现
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fastapi.responses import RedirectResponse
 from core.plugin import BasePlugin, PluginContext, register, PageMenu, PluginPage, logger
 
 
@@ -38,11 +37,11 @@ class NapcatConnectorPlugin(BasePlugin):
         "GET",
         "/redirect",
         auth=False,
-        summary="重定向到 NapCat WebUI（含 token）",
+        summary="获取 NapCat WebUI 跳转地址",
     )
     async def get_redirect_url(self):
         """
-        API 端点：返回 302 重定向到 NapCat WebUI（含 token）。
+        API 端点：返回 NapCat WebUI 的完整 URL（含 token）。
         每次请求从 self.plugin_cfg 实时读取配置。
         auth=False 因为此端点被 PluginPageView 的 iframe 调用，
         iframe 内无法发送 Authorization 头，且 cookie 的 SameSite
@@ -51,15 +50,12 @@ class NapcatConnectorPlugin(BasePlugin):
         url = self.plugin_cfg.get("webui_url", "").rstrip("/")
         if not url:
             logger.warning("NapCat WebUI URL 未配置")
-            return RedirectResponse(
-                url="/page/plugin/napcat_connector/napcat?error=noconfig",
-                status_code=302,
-            )
+            return {"url": "", "error": "webui_url 未配置"}
         token = self.plugin_cfg.get("webui_token", "")
         if token:
             url += f"?token={token}"
-        logger.info(f"重定向到 NapCat WebUI: {url}")
-        return RedirectResponse(url=url, status_code=302)
+        logger.info(f"返回 NapCat WebUI 链接: {url}")
+        return {"url": url}
 
     @register.page(
         "/napcat",
@@ -72,43 +68,71 @@ class NapcatConnectorPlugin(BasePlugin):
     )
     def napcat_page(self):
         """
-        返回一个轻量 HTML 页面，通过 window.location.href 跳转到
-        /api/plugin/napcat_connector/redirect 端点获取实时 URL 并重定向。
-        避免了 iframe 内 fetch 的 cookie 认证问题。
+        返回一个轻量 HTML 页面，通过 fetch 获取实时 WebUI URL，
+        然后用 iframe.src 加载 NapCat WebUI。
+        使用 fetch 而非 window.location 跳转，因为 iframe sandbox
+        不允许 top-navigation（缺少 allow-top-navigation 属性）。
         """
         html = """<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
 <style>
-body { margin:0; font-family: sans-serif; background:#f5f5f5; }
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { width:100%; height:100%; overflow:hidden;
+             font-family: sans-serif; background:#f5f5f5; }
 .msg { display:flex; flex-direction:column; align-items:center;
-       justify-content:center; height:100vh; color:#666; }
+       justify-content:center; height:100%; color:#666; }
 .msg h3 { margin:0 0 8px; }
 .msg.error { color:#e74c3c; }
 .spinner { width:40px; height:40px; border:4px solid #ddd;
            border-top-color:#409eff; border-radius:50%;
            animation:spin 0.8s linear infinite; margin-bottom:16px; }
 @keyframes spin { to { transform:rotate(360deg); } }
+#frame { width:100%; height:100%; border:none; display:none; }
 </style>
 </head>
 <body>
-<div class="msg">
+<div id="app" class="msg">
   <div class="spinner"></div>
-  <span>正在跳转到 NapCat WebUI…</span>
+  <span id="status">正在连接 NapCat WebUI…</span>
 </div>
+<iframe id="frame" allowfullscreen></iframe>
 <script>
 (function() {
-  // 从 URL 查询参数读取错误标识
-  var params = new URLSearchParams(window.location.search);
-  if (params.get('error') === 'noconfig') {
-    document.body.innerHTML =
-      '<div class="msg error"><h3>NapCat WebUI 未配置</h3>' +
-      '<p>请在「设置 → 插件配置 → NapCat Connector」中填写 webui_url</p></div>';
-    return;
-  }
-  // 跳转到 API 端点，获取实时 URL 并重定向
-  window.location.href = '/api/plugin/napcat_connector/redirect';
+  var app = document.getElementById('app');
+  var statusEl = document.getElementById('status');
+  var frame = document.getElementById('frame');
+
+  fetch('/api/plugin/napcat_connector/redirect', { credentials: 'same-origin' })
+    .then(function(resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    })
+    .then(function(d) {
+      if (d.error) {
+        app.className = 'msg error';
+        app.innerHTML = '<h3>NapCat WebUI 未配置</h3>' +
+          '<p>' + d.error + '</p>' +
+          '<p>请在「设置 → 插件配置 → NapCat Connector」中填写 webui_url</p>';
+        return;
+      }
+      if (!d.url) {
+        app.className = 'msg error';
+        app.innerHTML = '<h3>配置错误</h3><p>WebUI URL 为空</p>';
+        return;
+      }
+      // 隐藏加载提示，显示 iframe
+      app.style.display = 'none';
+      frame.style.display = 'block';
+      frame.src = d.url;
+    })
+    .catch(function(err) {
+      app.className = 'msg error';
+      app.innerHTML = '<h3>加载失败</h3>' +
+        '<p>无法获取 WebUI 配置: ' + err.message + '</p>' +
+        '<p>请检查 KiraAI 后端日志</p>';
+    });
 })();
 </script>
 </body>
