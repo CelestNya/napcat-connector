@@ -115,23 +115,33 @@ def build_ws_target_url(napcat_base: str, ws_path: str, query_params: dict) -> s
     return url
 
 
-def build_ws_interceptor_js(ws_proxy_prefix: str) -> str:
+def build_ws_interceptor_js(ws_proxy_prefix: str, proxy_prefix: str) -> str:
     """生成 WebSocket 构造器拦截脚本
 
     注入到 HTML <head> 中，在 NapCat 所有 JS 执行前运行。
     拦截所有 WebSocket 连接，将 URL 重写为 KiraAI 的 WS 代理路径，
     从而消除浏览器直连 NapCat 端口。
 
+    注意：rewrite_paths 可能已将 JS 源码中的 "/api/Debug/ws" 重写为
+    "{proxy_prefix}/_v{ts}/api/Debug/ws"，导致浏览器构建的 WS URL pathname
+    包含代理前缀。拦截器需检测并剥离这种嵌套的代理路径段，再添加 WS 代理前缀。
+
     Args:
         ws_proxy_prefix: 如 "/ws/plugin/napcat_connector"
+        proxy_prefix: 如 "/api/plugin/napcat_connector/proxy"（用于检测嵌套路径）
     """
+    # 用 new RegExp() 构造，避免正则字面量 / 分隔符与 proxy_prefix 中的 / 冲突
+    # proxy_prefix 中的 / 需转义为 \/，\d 需保持为 \\d
+    escaped_prefix = proxy_prefix.replace("/", "\\/")
     return f"""<script>
 (function(){{
   var OW=window.WebSocket;if(!OW)return;
+  var PP=new RegExp('^{escaped_prefix}\\/_v\\\\d+\\/');
   window.WebSocket=function(url,protos){{
     try{{var u=new URL(url);
     u.protocol=location.protocol==='https:'?'wss:':'ws:';
     u.host=location.host;
+    if(PP.test(u.pathname))u.pathname=u.pathname.replace(PP,'');
     u.pathname='{ws_proxy_prefix}'+u.pathname;
     url=u.toString();}}catch(e){{}}
     return protos?new OW(url,protos):new OW(url);
@@ -171,7 +181,7 @@ def build_inject_html(proxy_prefix: str, cache_buster: str, ws_proxy_prefix: str
         '</script>'
     )
 
-    ws_js = build_ws_interceptor_js(ws_proxy_prefix)
+    ws_js = build_ws_interceptor_js(ws_proxy_prefix, proxy_prefix)
     return f'<base href="{base_href}">\n{bootstrap_js}\n{ws_js}'
 
 

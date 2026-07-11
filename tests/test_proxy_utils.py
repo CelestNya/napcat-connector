@@ -280,29 +280,37 @@ class TestBuildWsInterceptorJs:
     """验证 WebSocket 拦截器脚本内容"""
 
     def test_contains_override(self):
-        js = build_ws_interceptor_js(WS_PROXY_PREFIX)
+        js = build_ws_interceptor_js(WS_PROXY_PREFIX, PROXY_PREFIX)
         assert "window.WebSocket=function" in js
 
     def test_contains_prototype_preservation(self):
-        js = build_ws_interceptor_js(WS_PROXY_PREFIX)
+        js = build_ws_interceptor_js(WS_PROXY_PREFIX, PROXY_PREFIX)
         assert "window.WebSocket.prototype=OW.prototype" in js
 
     def test_contains_constants(self):
-        js = build_ws_interceptor_js(WS_PROXY_PREFIX)
+        js = build_ws_interceptor_js(WS_PROXY_PREFIX, PROXY_PREFIX)
         assert "CONNECTING=OW.CONNECTING" in js
         assert "OPEN=OW.OPEN" in js
         assert "CLOSING=OW.CLOSING" in js
         assert "CLOSED=OW.CLOSED" in js
 
     def test_contains_ws_proxy_prefix(self):
-        js = build_ws_interceptor_js(WS_PROXY_PREFIX)
+        js = build_ws_interceptor_js(WS_PROXY_PREFIX, PROXY_PREFIX)
         assert WS_PROXY_PREFIX in js
 
     def test_contains_url_rewrite(self):
-        js = build_ws_interceptor_js(WS_PROXY_PREFIX)
+        js = build_ws_interceptor_js(WS_PROXY_PREFIX, PROXY_PREFIX)
         assert "u.pathname='" in js
         assert "u.protocol=" in js
         assert "u.host=" in js
+
+    def test_contains_proxy_prefix_strip_logic(self):
+        """拦截器应包含代理前缀剥离逻辑（防止 rewrite_paths 导致路径嵌套）"""
+        js = build_ws_interceptor_js(WS_PROXY_PREFIX, PROXY_PREFIX)
+        assert "PP" in js  # 正则变量
+        assert ".replace(PP" in js  # 剥离调用
+        # 正则中应包含转义的 proxy_prefix
+        assert PROXY_PREFIX.replace("/", "\\/") in js or PROXY_PREFIX in js
 
 
 # ==============================================================
