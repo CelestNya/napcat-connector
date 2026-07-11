@@ -8,42 +8,33 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import re
 import time
 import asyncio
 import websockets
-import httpx
 from fastapi import Request, Response, WebSocket
 from fastapi.responses import RedirectResponse, StreamingResponse
 from core.plugin import BasePlugin, PluginContext, register, PageMenu, PluginPage, logger
 
-PROXY_PREFIX = "/api/plugin/napcat_connector/proxy"
-PLUGIN_API_PREFIX = "/api/plugin/napcat_connector"
-NAPCAT_DEFAULT_BASE = "http://127.0.0.1:6099"
+from proxy_utils import (
+    PROXY_PREFIX,
+    PLUGIN_API_PREFIX,
+    NAPCAT_DEFAULT_BASE,
+    WS_PROXY_PREFIX,
+    HTTP_METHODS,
+    rewrite_paths,
+    strip_version,
+    build_entry_url,
+    is_text_content,
+    is_sse_response,
+    should_read_body,
+    build_ws_target_url,
+    build_inject_html,
+    HttpClientManager,
+)
 
 # 缓存破坏版本号：每次插件加载时生成新值，注入到代理 URL 中，
 # 使浏览器无法复用之前缓存的旧 JS（no-store 只阻止未来缓存，不清除已有缓存）
 _CACHE_BUSTER = str(int(time.time() * 1000))
-
-# 路径重写规则：将 NapCat 的绝对路径重写为代理路径
-# 关键：必须同时匹配 "/api"（无尾斜杠，如 axios baseURL）和 "/api/..."（带斜杠）
-# 加反引号 ` 以匹配前端模板字面量（NapCat 扩展页面 iframe src 用模板字面量）
-# (?!/plugin) 负向预查：防止二次重写代理前缀 PROXY_PREFIX 自身包含的 /api
-# (?=[/"'\s;)]) 正向预查：确保匹配到完整的路径词而非子串
-# 重写后的路径含 _v 版本段，强制浏览器每次插件加载后重新请求
-REWRITE_WEBUI = re.compile(r"""(["'`(=\s])/webui(?!/plugin)(?=[/"'\s;)])""")
-REWRITE_WEBUI_REPL = rf'\1{PROXY_PREFIX}/_v{_CACHE_BUSTER}/webui'
-REWRITE_API = re.compile(r"""(["'`(=\s])/api(?!/plugin)(?=[/"'\s;)])""")
-REWRITE_API_REPL = rf'\1{PROXY_PREFIX}/_v{_CACHE_BUSTER}/api'
-# /files/theme.css 等静态资源（由无 baseURL 的 axios 实例 Fd 直接请求）
-REWRITE_FILES = re.compile(r"""(["'`(=\s])/files(?!/plugin)(?=[/"'\s;)])""")
-REWRITE_FILES_REPL = rf'\1{PROXY_PREFIX}/_v{_CACHE_BUSTER}/files'
-# /plugin/xxx 等 NapCat 插件扩展页面 iframe src（模板字面量 \`/plugin/${id}/page/${path}\`）
-# 正向预查包含 $ 以匹配模板字面量中的 ${expression}
-# 无需 (?!/xxx) 防二次重写：代理前缀中 /api/plugin/napcat_connector 的 /plugin 前是字母 i，
-# 不在字符类 ["'`(=\s] 中，不会误匹配
-REWRITE_PLUGIN = re.compile(r"""(["'`(=\s])/plugin(?=[/"'\s;$])""")
-REWRITE_PLUGIN_REPL = rf'\1{PROXY_PREFIX}/_v{_CACHE_BUSTER}/plugin'
 
 
 class NapcatConnectorPlugin(BasePlugin):
@@ -52,10 +43,12 @@ class NapcatConnectorPlugin(BasePlugin):
         super().__init__(ctx, cfg)
 
     async def initialize(self):
+        self._http_mgr = HttpClientManager()
+        await self._http_mgr.initialize()
         logger.info("NapCat Connector 已就绪（代理模式）")
 
     async def terminate(self):
-        pass
+        await self._http_mgr.terminate()
 
     @register.page(
         "/napcat",
@@ -76,52 +69,38 @@ class NapcatConnectorPlugin(BasePlugin):
 
     @register.api("GET", "/entry", auth=False)
     async def proxy_entry(self):
-        """动态重定向入口：每次请求读取最新配置，拼 token 后 302 跳转到代理首页
-
-        注册路径 /entry -> 完整 URL /api/plugin/napcat_connector/entry
-        from_url 指向此路径（非 /proxy/ 下），避免被 /proxy/{path:path} 捕获。
-        URL 含 _v 版本段 + _t 时间戳，强制浏览器放弃旧缓存。
-        """
+        """动态重定向入口：每次请求读取最新配置，拼 token 后 302 跳转到代理首页"""
         token = self.plugin_cfg.get("webui_token", "")
-        url = f"{PROXY_PREFIX}/_v{_CACHE_BUSTER}/webui/?_t={int(time.time() * 1000)}"
-        if token:
-            url += f"&token={token}"
+        url = build_entry_url(PROXY_PREFIX, _CACHE_BUSTER, token)
         return RedirectResponse(url=url, status_code=302)
 
-    @register.api("GET", "/proxy/{path:path}", auth=False)
-    async def proxy_get(self, path: str, request: Request):
-        """反向代理 GET 请求"""
-        return await self._proxy("GET", path, request)
+    # 循环注册所有 HTTP 方法（利用默认参数绑定避免闭包陷阱）
+    for _method in HTTP_METHODS:
+        @register.api(_method, "/proxy/{path:path}", auth=False)
+        async def _proxy_handler(self, path: str, request: Request, _m=_method):
+            """反向代理 {_m} 请求"""
+            return await self._proxy(_m, path, request)
 
-    @register.api("POST", "/proxy/{path:path}", auth=False)
-    async def proxy_post(self, path: str, request: Request):
-        """反向代理 POST 请求"""
-        return await self._proxy("POST", path, request)
+    @register.ws("/{ws_path:path}", auth=False)
+    async def ws_proxy(self, ws: WebSocket):
+        """通配 WebSocket 代理：所有 WS 流量经 KiraAI 中转，NapCat 端口零暴露
 
-    @register.api("HEAD", "/proxy/{path:path}", auth=False)
-    async def proxy_head(self, path: str, request: Request):
-        """反向代理 HEAD 请求"""
-        return await self._proxy("HEAD", path, request)
-
-    @register.ws("/terminal", auth=False)
-    async def ws_terminal_proxy(self, ws: WebSocket):
-        """代理 NapCat 系统终端 WebSocket
-
-        浏览器连接 KiraAI 的 /ws/plugin/napcat_connector/terminal，
-        本处理器再直连 NapCat 的 /api/ws/terminal，双向转发。
+        浏览器连接 /ws/plugin/napcat_connector/api/ws/terminal?id=x&token=y
+        -> ws_path = "api/ws/terminal"
+        -> 连接 NapCat ws://127.0.0.1:6099/api/ws/terminal?id=x&token=y
         """
         await ws.accept()
-        qp = dict(ws.query_params)
-        tid = qp.get("id", "")
-        token = qp.get("token", "")
-        if not tid or not token:
-            await ws.close(code=1008, reason="Missing id or token")
+        ws_path = ws.path_params.get("ws_path", "")
+        if not ws_path:
+            await ws.close(code=1008, reason="Empty path")
             return
 
-        napcat_ws_url = f"ws://127.0.0.1:6099/api/ws/terminal?id={tid}&token={token}"
+        napcat_base = self.plugin_cfg.get("webui_url", NAPCAT_DEFAULT_BASE)
+        query_params = dict(ws.query_params)
+        target_url = build_ws_target_url(napcat_base, ws_path, query_params)
 
         try:
-            async with websockets.connect(napcat_ws_url) as nws:
+            async with websockets.connect(target_url) as nws:
                 async def browser_to_napcat():
                     try:
                         while True:
@@ -140,9 +119,12 @@ class NapcatConnectorPlugin(BasePlugin):
 
                 await asyncio.gather(browser_to_napcat(), napcat_to_browser())
         except websockets.exceptions.WebSocketException as e:
-            await ws.close(code=1011, reason=str(e))
+            try:
+                await ws.close(code=1011, reason=str(e))
+            except Exception:
+                pass
         except Exception as e:
-            logger.error(f"Terminal WS 代理错误: {e}")
+            logger.error(f"WS 代理错误 ({ws_path}): {e}")
             try:
                 await ws.close(code=1011, reason="Internal error")
             except Exception:
@@ -154,7 +136,7 @@ class NapcatConnectorPlugin(BasePlugin):
             path = "webui/"
 
         # 剥离缓存破坏版本段 _vxxxx/（仅用于让浏览器 URL 变化，不传给 NapCat）
-        path = re.sub(r'^_v\d+/', '', path)
+        path = strip_version(path)
 
         # 拦截 Service Worker 脚本：代理环境下 SW 会缓存未重写的旧 JS 导致 422
         if path.rstrip("/").endswith("/sw.js"):
@@ -165,14 +147,14 @@ class NapcatConnectorPlugin(BasePlugin):
         napcat_base = self.plugin_cfg.get("webui_url", NAPCAT_DEFAULT_BASE).rstrip("/")
         target_url = f"{napcat_base}/{path.lstrip('/')}"
 
-        # 转发 query string（如 /Log/GetLog?id=xxx）
+        # 转发 query string
         query_string = request.url.query
         if query_string:
             target_url += f"?{query_string}"
 
-        # POST 时读取请求体
+        # POST/PUT/PATCH 时读取请求体
         body = None
-        if method == "POST":
+        if method in ("POST", "PUT", "PATCH"):
             body = await request.body()
 
         # 转发请求头：透传客户端的头（Authorization/Cookie 等），排除 hop-by-hop 头
@@ -185,150 +167,78 @@ class NapcatConnectorPlugin(BasePlugin):
             if key.lower() not in skip_headers:
                 forward_headers[key] = val
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            try:
-                # 使用流式请求以支持 SSE（EventSource 长连接）
-                async with client.stream(
-                    method=method,
-                    url=target_url,
-                    content=body,
-                    headers=forward_headers,
-                    follow_redirects=False,
-                ) as resp:
-                    # 构建响应头（统一处理，流式和非流式共用）
-                    res_headers = dict(resp.headers)
-                    if "location" in res_headers:
-                        loc = res_headers["location"]
-                        if loc.startswith("/webui") or loc.startswith("/api/"):
-                            res_headers["location"] = f"{PROXY_PREFIX}/_v{_CACHE_BUSTER}{loc}"
+        client = self._http_mgr.client
+        try:
+            req = client.build_request(
+                method=method,
+                url=target_url,
+                content=body,
+                headers=forward_headers,
+            )
+            resp = await client.send(req, stream=True)
+        except httpx.RequestError as e:
+            logger.error(f"代理请求失败: {e}")
+            return Response(content=f"Proxy error: {e}", status_code=502)
 
-                    # 剥离不兼容的响应头
-                    res_headers.pop("x-frame-options", None)
-                    res_headers.pop("content-security-policy", None)
-                    res_headers.pop("content-encoding", None)
-                    res_headers.pop("transfer-encoding", None)
-                    res_headers.pop("content-length", None)
-                    res_headers.pop("etag", None)
-                    res_headers.pop("last-modified", None)
-                    res_headers["cache-control"] = "no-store"
+        # 构建响应头（统一处理，流式和非流式共用）
+        res_headers = dict(resp.headers)
+        if "location" in res_headers:
+            loc = res_headers["location"]
+            if loc.startswith("/webui") or loc.startswith("/api/"):
+                res_headers["location"] = f"{PROXY_PREFIX}/_v{_CACHE_BUSTER}{loc}"
 
-                    content_type = resp.headers.get("content-type", "")
+        # 剥离不兼容的响应头
+        res_headers.pop("x-frame-options", None)
+        res_headers.pop("content-security-policy", None)
+        res_headers.pop("content-encoding", None)
+        res_headers.pop("transfer-encoding", None)
+        res_headers.pop("content-length", None)
+        res_headers.pop("etag", None)
+        res_headers.pop("last-modified", None)
+        res_headers["cache-control"] = "no-store"
 
-                    # SSE 流式响应：httpx 不支持 SSE 长连接（aiter_bytes 不 yield），
-                    # 改用同步 http.client 在后台线程读取，通过 Queue 桥接到
-                    # StreamingResponse
-                    if "text/event-stream" in content_type:
-                        from urllib.parse import urlparse as _up
-                        _parsed = _up(napcat_base)
-                        _sse_path = f"/{path.lstrip('/')}"
-                        if query_string:
-                            _sse_path += f"?{query_string}"
+        content_type = resp.headers.get("content-type", "")
 
-                        async def _sse_stream():
-                            import http.client as _hc
-                            q = asyncio.Queue()
-                            _done = object()
-
-                            def _fetch():
-                                try:
-                                    c = _hc.HTTPConnection(
-                                        _parsed.hostname, _parsed.port or 6099,
-                                        timeout=None)
-                                    c.request(method, _sse_path,
-                                              body=body,
-                                              headers=forward_headers)
-                                    r = c.getresponse()
-                                    while True:
-                                        chunk = r.read1(65536)
-                                        if not chunk:
-                                            break
-                                        loop.call_soon_threadsafe(
-                                            q.put_nowait, chunk)
-                                except Exception:
-                                    pass
-                                finally:
-                                    loop.call_soon_threadsafe(
-                                        q.put_nowait, _done)
-
-                            loop = asyncio.get_running_loop()
-                            fut = loop.run_in_executor(None, _fetch)
-                            while True:
-                                item = await q.get()
-                                if item is _done:
-                                    break
-                                yield item
-                            await fut
-                        return StreamingResponse(
-                            content=_sse_stream(),
-                            status_code=resp.status_code,
-                            headers=res_headers,
-                            media_type=content_type or None,
-                        )
-
-                    # 非流式响应：收集完整 body 后做路径重写
-                    body = b""
+        # ==== SSE 流式响应 ====
+        if is_sse_response(content_type):
+            async def _sse_stream():
+                try:
                     async for chunk in resp.aiter_bytes():
-                        body += chunk
-                    # 保存供外层使用（resp 在 async with 块结束后不可用）
-                    _status = resp.status_code
-            except httpx.RequestError as e:
-                logger.error(f"代理请求失败: {e}")
-                return Response(content=f"Proxy error: {e}", status_code=502)
+                        yield chunk
+                finally:
+                    await resp.aclose()
 
-        # ====== 以下仅适用于非流式响应（body 已完整收集）======
+            return StreamingResponse(
+                content=_sse_stream(),
+                status_code=resp.status_code,
+                headers=res_headers,
+                media_type=content_type or None,
+            )
+
+        # ==== 非流式响应 ====
+        try:
+            if should_read_body(method):
+                body = await resp.aread()
+            else:
+                body = b""
+            _status = resp.status_code
+        finally:
+            await resp.aclose()
 
         # 只对文本类内容做路径重写，二进制内容（图片/字体/音视频）透传
-        needs_rewrite = any(
-            t in content_type
-            for t in ["text/html", "text/javascript", "application/javascript",
-                      "text/css", "application/json"]
-        )
-        if needs_rewrite:
+        if is_text_content(content_type):
             body_str = body.decode("utf-8", errors="replace")
             # 统一重写所有文本内容中的绝对路径
-            # (?!/plugin) 确保不二次重写代理前缀中已有的 /api
-            body_str = REWRITE_API.sub(REWRITE_API_REPL, body_str)
-            body_str = REWRITE_WEBUI.sub(REWRITE_WEBUI_REPL, body_str)
-            body_str = REWRITE_FILES.sub(REWRITE_FILES_REPL, body_str)
-            body_str = REWRITE_PLUGIN.sub(REWRITE_PLUGIN_REPL, body_str)
-            # 修复插件 WebSocket URL：window.location.origin 指向代理页面的 KiraAI 地址，
-            # 但 WebSocket 必须直连 NapCat（端口 6099），不能走代理（代理不支持 WS 升级）
-            body_str = body_str.replace(
-                "window.location.origin",
-                '"http://127.0.0.1:6099"')
-            body_str = body_str.replace(
-                f"{PROXY_PREFIX}/_v{_CACHE_BUSTER}/api/Debug/ws",
-                "/api/Debug/ws")
-            # 修复终端 WebSocket 路径：将代理 HTTP 路径改为 KiraAI 的 WebSocket 端点
-            body_str = body_str.replace(
-                f"{PROXY_PREFIX}/_v{_CACHE_BUSTER}/api/ws/terminal",
-                "/ws/plugin/napcat_connector/terminal")
+            body_str = rewrite_paths(body_str, PROXY_PREFIX, _CACHE_BUSTER)
             # 禁用 Service Worker 注册（在 JS 中，不在 HTML 中）
             # 代理环境下 SW 会缓存未重写的旧 JS 导致 422
             body_str = body_str.replace(
                 '"serviceWorker"in navigator&&window.addEventListener("load",',
                 'false&&window.addEventListener("load",')
             if "text/html" in content_type:
-                # 注入 <base> 标签 + 启动脚本
-                # 1. <base>: 将 NapCat 页面中所有以 / 开头的相对 URL 解析为代理路径，
-                #    包括 fetch/XHR/EventSource 请求、<script src>、<link href> 等。
-                #    无论路径以 /api/ /webui/ /files/ /plugin/ /assets/ 还是其他开头，
-                #    浏览器都自动解析为 {PROXY}/_v{version}/原路径，实现"一了百了"。
-                # 2. localStorage 隔离：同源 iframe 与主窗口共享 Storage.prototype
-                #    但实例不同，用 this === window.localStorage 区分
-                # 3. Service Worker 清理：旧 SW 可能缓存未重写内容
-                _base_href = f"{PROXY_PREFIX}/_v{_CACHE_BUSTER}/"
-                _inject_html = f"""<base href="{_base_href}">
-<script>
-(function(k){{var ls=window.localStorage,P=Storage.prototype,G=P.getItem,S=P.setItem,R=P.removeItem;
-P.getItem=function(n){{return this===ls?G.call(this,k+n):G.call(this,n)}};
-P.setItem=function(n,v){{this===ls?S.call(this,k+n,v):S.call(this,n,v)}};
-P.removeItem=function(n){{this===ls?R.call(this,k+n):R.call(this,n)}};
-}})("napcat_");
-(function(){{if(navigator&&navigator.serviceWorker)
-navigator.serviceWorker.getRegistrations().then(function(rs){{rs.forEach(function(r){{r.unregister()}})}}).catch(function(){{}})
-}})();
-</script>"""
+                # 注入 <base> 标签 + 启动脚本 + WebSocket 拦截器
+                _inject_html = build_inject_html(
+                    PROXY_PREFIX, _CACHE_BUSTER, WS_PROXY_PREFIX)
                 body_str = body_str.replace("<head>", f"<head>{_inject_html}")
             body = body_str.encode("utf-8")
 

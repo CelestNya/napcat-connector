@@ -5,11 +5,13 @@
 ```
 napcat-connector/
 ├── __init__.py          # 插件入口，try/except ImportError
-├── main.py              # 插件主逻辑（路由、代理、重写）
+├── main.py              # 插件主逻辑（路由、代理、WS 转发）
+├── proxy_utils.py       # 纯函数模块（常量、正则规则、JS 注入模板、连接池管理）
 ├── manifest.json        # 插件清单（名称、版本、描述）
 ├── schema.json          # 配置项 schema
 ├── tests/
-│   ├── test_main.py     # 单元测试（路径重写、版本段、entry 构建）
+│   ├── conftest.py      # pytest 配置（sys.path）
+│   ├── test_proxy_utils.py  # 单元测试（64 用例）
 │   └── diagnose_plugin.mjs  # Playwright 端到端诊断
 └── docs/
     ├── README.md        # 总览
@@ -17,18 +19,33 @@ napcat-connector/
     └── DEVELOPMENT.md   # 本文件
 ```
 
-## 核心模块 (`main.py`)
+## 核心模块
+
+### `proxy_utils.py`（纯函数，可独立测试）
+
+| 组件 | 说明 |
+|------|------|
+| 常量 | `PROXY_PREFIX`, `PLUGIN_API_PREFIX`, `NAPCAT_DEFAULT_BASE`, `WS_PROXY_PREFIX`, `HTTP_METHODS` |
+| 正则规则 | `_REWRITE_API`, `_REWRITE_WEBUI`, `_REWRITE_FILES`, `_REWRITE_PLUGIN` |
+| `rewrite_paths()` | 4 条路径重写 |
+| `strip_version()` | `_vxxxx/` 版本段剥离 |
+| `build_entry_url()` | entry 重定向 URL |
+| `is_text_content()` / `is_sse_response()` / `should_read_body()` | Content-Type 判断 |
+| `build_ws_target_url()` | WebSocket 目标 URL 构建 |
+| `build_ws_interceptor_js()` / `build_inject_html()` | HTML 注入模板 |
+| `HttpClientManager` | 共享 httpx 连接池管理 |
+
+### `main.py`（运行时逻辑）
 
 | 组件 | 行数 | 说明 |
 |------|------|------|
-| 常量配置 | ~30 | `PROXY_PREFIX`, `PLUGIN_API_PREFIX`, `NAPCAT_DEFAULT_BASE` |
 | 缓存破坏 | ~5 | `_CACHE_BUSTER = str(int(time.time() * 1000))` |
-| 正则重写 | ~15 | `REWRITE_API`, `REWRITE_WEBUI`, `REWRITE_FILES`, `REWRITE_PLUGIN` |
+| `__init__` / `initialize` / `terminate` | ~10 | `HttpClientManager` 生命周期 |
 | `napcat_page` | ~10 | `@register.page` 注册侧栏导航 |
-| `proxy_entry` | ~15 | `@register.api("GET", "/entry")` 动态重定向 |
-| `proxy_*` | ~20 | `GET`/`POST`/`HEAD` 代理入口 |
-| `ws_terminal_proxy` | ~35 | `@register.ws("/terminal")` WebSocket 代理 |
-| `_proxy` | ~120 | 代理核心逻辑（转发、重写、流式 SSE） |
+| `proxy_entry` | ~8 | `@register.api("GET", "/entry")` 动态重定向 |
+| `_proxy_handler` | ~5 | 循环注册 6 种 HTTP 方法 |
+| `ws_proxy` | ~40 | `@register.ws("/{ws_path:path}")` 通配 WS 代理 |
+| `_proxy` | ~120 | 代理核心逻辑（转发、重写、SSE 流式） |
 
 ### `_proxy` 方法内部流程
 
@@ -39,41 +56,47 @@ _proxy(method, path, request)
   ├─ 2. 拦截 sw.js（返回 404）
   ├─ 3. 构造 target_url（配置热更新）
   ├─ 4. 追加 query string
-  ├─ 5. 读取 POST body
+  ├─ 5. 读取 POST/PUT/PATCH body
   ├─ 6. 转发请求头（剥离条件缓存/不兼容头）
   │
-  ├─ 7. httpx 请求 NapCat
+  ├─ 7. 共享 httpx client.send(stream=True)
   │
   ├─ 8. 判断 SSE (text/event-stream)
-  │     └─ 流式返回（StreamingResponse）
+  │     └─ 流式返回（aiter_bytes → StreamingResponse）
   │
   ├─ 9. 非流式处理：
+  │     ├─ HEAD 短路（不读 body）
   │     ├─ 重写 Location 头
   │     ├─ 剥离不兼容/缓存头
   │     ├─ 设置 Cache-Control: no-store
-  │     ├─ 路径重写（正则 4 规则）
-  │     ├─ 修复 WebSocket 路径
+  │     ├─ 路径重写（rewrite_paths）
   │     ├─ 禁用 SW 注册
-  │     └─ HTML 注入（<base>, localStorage 隔离, SW 清理）
+  │     └─ HTML 注入（<base>, localStorage 隔离, SW 清理, WS 拦截器）
   │
   └─ 10. 返回 Response
 ```
 
 ## 测试
 
-### 单元测试
+### 单元测试（不依赖 KiraAI 运行时）
 
 ```bash
 cd /d/Projects/KiraAI-dev/KiraAI-napcat-connector
-python3 -m pytest tests/test_main.py -v
+.venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
 覆盖：
-- 所有重写规则的匹配/不匹配
-- 版本段剥离
-- entry 重定向 URL 构建
-- 防二次重写
-- 模板字面量匹配
+- 全部 4 条路径重写规则的匹配/不匹配（16 用例）
+- 版本段剥离（3 用例）
+- entry 重定向 URL 构建（3 用例）
+- Content-Type 判断函数（11 用例）
+- WebSocket 目标 URL 构建（7 用例）
+- WS 拦截器 JS 生成（5 用例）
+- HTML 注入完整性（5 用例）
+- HTTP_METHODS 常量（7 用例）
+- HttpClientManager 连接池生命周期（5 用例）
+
+总计 **64 个测试**。
 
 ### Playwright 端到端测试
 
@@ -90,21 +113,27 @@ cd /d/tmp && node diagnose_plugin.mjs
 
 ### 新增重写规则
 
-1. 在常量区添加正则：`REWRITE_xxx = re.compile(...)`
-2. 在 `_proxy` 方法中的重写块添加：`body_str = REWRITE_xxx.sub(REWRITE_xxx_REPL, body_str)`
-3. 在测试文件中添加对应测试
+1. 在 `proxy_utils.py` 添加正则：`_REWRITE_xxx = re.compile(...)`
+2. 在 `rewrite_paths()` 中添加 sub 调用
+3. 在 `tests/test_proxy_utils.py` 中 `TestRewritePaths` 添加对应测试
 
 ### 新增 HTTP 代理方法
 
-1. 添加 `@register.api("METHOD", "/proxy/{path:path}", auth=False)`
-2. 方法体调用 `return await self._proxy("METHOD", path, request)`
+1. 在 `proxy_utils.py` 的 `HTTP_METHODS` 元组中添加方法名
+2. 方法自动注册（循环），无需修改其他代码
 
 ### 新增 WebSocket 代理
 
-1. 确认路径与 JS 改写匹配
-2. 添加 `@register.ws("/xxx", auth=False)`
-3. 在处理器中连接 NapCat 对应端点，双向转发
-4. 在 JS 重写中添加 pathname 替换
+通配 WS 端点 `@register.ws("/{ws_path:path}")` 已覆盖所有 WS 路径。
+- 终端 WS：自动捕获 `api/ws/terminal`
+- 插件 WS：自动捕获 `api/Debug/ws`、`api/xxx/ws` 等
+- query params 全量透传
+
+无需新增端点，只需确认 WS 构造器拦截器已正确注入。
+
+### 修改 HTML 注入内容
+
+编辑 `proxy_utils.py` 中的 `build_inject_html()` 或 `build_ws_interceptor_js()`。
 
 ## 调试技巧
 
@@ -125,6 +154,7 @@ html = urllib.request.urlopen(req).read().decode("utf-8")
 print('<base href=' in html)           # base 标签
 print('napcat_' in html)               # localStorage 隔离
 print('getRegistrations' in html)      # SW 清理
+print('window.WebSocket' in html)      # WS 拦截器
 ```
 
 ### 查看注册路由
