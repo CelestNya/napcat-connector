@@ -48,7 +48,9 @@ class NapcatConnectorPlugin(BasePlugin):
         logger.info("NapCat Connector 已就绪（代理模式）")
 
     async def terminate(self):
+        logger.info("NapCat Connector 正在关闭...")
         await self._http_mgr.terminate()
+        logger.info("NapCat Connector 已关闭")
 
     @register.page(
         "/napcat",
@@ -176,7 +178,7 @@ class NapcatConnectorPlugin(BasePlugin):
                 headers=forward_headers,
             )
             resp = await client.send(req, stream=True)
-        except httpx.RequestError as e:
+        except (httpx.RequestError, RuntimeError) as e:
             logger.error(f"代理请求失败: {e}")
             return Response(content=f"Proxy error: {e}", status_code=502)
 
@@ -206,7 +208,10 @@ class NapcatConnectorPlugin(BasePlugin):
                     async for chunk in resp.aiter_bytes():
                         yield chunk
                 finally:
-                    await resp.aclose()
+                    try:
+                        await resp.aclose()
+                    except Exception:
+                        pass
 
             return StreamingResponse(
                 content=_sse_stream(),
@@ -216,12 +221,15 @@ class NapcatConnectorPlugin(BasePlugin):
             )
 
         # ==== 非流式响应 ====
+        _status = resp.status_code
         try:
             if should_read_body(method):
                 body = await resp.aread()
             else:
                 body = b""
-            _status = resp.status_code
+        except (httpx.RequestError, RuntimeError) as e:
+            logger.error(f"代理读取响应失败 (shutdown?): {e}")
+            body = b""
         finally:
             await resp.aclose()
 

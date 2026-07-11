@@ -196,7 +196,15 @@ class HttpClientManager:
         self._client: httpx.AsyncClient | None = None
 
     async def initialize(self, timeout: float = 30.0) -> None:
-        """创建共享 http client 并配置连接池"""
+        """创建共享 http client 并配置连接池
+
+        若已有旧 client（如重复调用），先关闭再创建新实例。
+        """
+        if self._client is not None:
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass
         self._client = httpx.AsyncClient(
             limits=httpx.Limits(
                 max_keepalive_connections=20,
