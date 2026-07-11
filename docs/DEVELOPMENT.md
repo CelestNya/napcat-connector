@@ -71,7 +71,7 @@ _proxy(method, path, request)
   │     ├─ 设置 Cache-Control: no-store
   │     ├─ 路径重写（rewrite_paths）
   │     ├─ 禁用 SW 注册
-  │     └─ HTML 注入（<base>, localStorage 隔离, SW 清理, WS 拦截器）
+  │     └─ HTML 注入（<base>, SW 清理, WS 拦截器）
   │
   └─ 10. 返回 Response
 ```
@@ -152,7 +152,7 @@ js = urllib.request.urlopen(req).read().decode("utf-8")
 req = urllib.request.Request(f"{PROXY}/webui/")
 html = urllib.request.urlopen(req).read().decode("utf-8")
 print('<base href=' in html)           # base 标签
-print('napcat_' in html)               # localStorage 隔离
+print('getRegistrations' in html)      # SW 清理
 print('getRegistrations' in html)      # SW 清理
 print('window.WebSocket' in html)      # WS 拦截器
 ```

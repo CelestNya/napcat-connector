@@ -112,9 +112,9 @@ async def run():
         resp = await c.get(f"{PROXY}/_v1/webui/", follow_redirects=True,
             headers={"Authorization": f"Bearer {KIRAAI_TOKEN}"})
         html = resp.text
-        checks = [
-            ("<base href=", "<base> 标签"),
-            ("napcat_", "localStorage 隔离"),
+	checks = [
+	            ("<base href=", "<base> 标签"),
+	            ("getRegistrations", "SW 清理"),
             ("getRegistrations", "SW 清理"),
             ("window.WebSocket=function", "WS 拦截器 (patch)"),
             ("window.WebSocket.prototype=OW.prototype", "WS 拦截器 (prototype)"),

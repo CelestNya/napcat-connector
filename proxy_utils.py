@@ -166,15 +166,11 @@ def build_inject_html(proxy_prefix: str, cache_buster: str, ws_proxy_prefix: str
     """
     base_href = f"{proxy_prefix}/_v{cache_buster}/"
 
-    # localStorage 隔离 + SW 清理
+    # 启动脚本：Service Worker 清理
+    # （无 localStorage 隔离：同源 iframe 共享 Storage.prototype，
+    #  且 NapCat 的 theme/localStorage key 与 KiraAI 无冲突）
     bootstrap_js = (
         '<script>'
-        '(function(k){var ls=window.localStorage,P=Storage.prototype,'
-        'G=P.getItem,S=P.setItem,R=P.removeItem;'
-        'P.getItem=function(n){return this===ls?G.call(this,k+n):G.call(this,n)};'
-        'P.setItem=function(n,v){this===ls?S.call(this,k+n,v):S.call(this,n,v)};'
-        'P.removeItem=function(n){this===ls?R.call(this,k+n):R.call(this,n)};'
-        '}})("napcat_");'
         '(function(){if(navigator&&navigator.serviceWorker)'
         'navigator.serviceWorker.getRegistrations().then(function(rs){'
         'rs.forEach(function(r){r.unregister()})}).catch(function(){})})();'

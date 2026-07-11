@@ -325,10 +325,10 @@ class TestBuildInjectHtml:
         assert f'<base href="{PROXY_PREFIX}/_v{_CB}/">' in html
 
     def test_contains_localstorage_isolation(self):
+        """localStorage 隔离不再使用（同源 iframe 共享 Storage.prototype）"""
+        # 确保隔离脚本已被移除（不再修 Storage.prototype）
         html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)
-        assert 'this===ls?G.call(this,k+n):G.call(this,n)' in html
-        assert 'this===ls?S.call(this,k+n,v):S.call(this,n,v)' in html
-        assert 'this===ls?R.call(this,k+n):R.call(this,n)' in html
+        assert 'this===ls' not in html
 
     def test_contains_sw_cleanup(self):
         html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)

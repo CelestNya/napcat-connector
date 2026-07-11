@@ -347,8 +347,27 @@ class TestApiContract:
         """插件清单存在且有效"""
         import os
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(_BASE, "manifest.json")) as f:
+        with open(os.path.join(base, "manifest.json")) as f:
             manifest = json.load(f)
         assert "plugin_id" in manifest
         assert "version" in manifest
         assert manifest["plugin_id"] == "napcat_connector"
+
+    def test_no_storage_prototype_mutation(self):
+        """不应修改 Storage.prototype（同源 iframe 共享原型，影响父窗口 localStorage）"""
+        from proxy_utils import build_inject_html, PROXY_PREFIX, WS_PROXY_PREFIX
+        html = build_inject_html(PROXY_PREFIX, "test_cb", WS_PROXY_PREFIX)
+        # 确保没有 Storage.prototype 修改代码
+        assert "prototype" not in html or "OW.prototype" in html  # OW.prototype 是 WS 拦截器的
+        # 确保没有 napcat_ 前缀隔离脚本（只有 URL 路径中的 napcat_connector）
+        assert "napcat_" not in html.replace("napcat_connector", "")
+
+    def test_inject_no_longer_isolation(self):
+        """注入 HTML 不应包含 localStorage 隔离脚本（会污染父窗口 localStorage）"""
+        from proxy_utils import build_inject_html, PROXY_PREFIX, WS_PROXY_PREFIX
+        html = build_inject_html(PROXY_PREFIX, "test_cb", WS_PROXY_PREFIX)
+        # Storage.prototype 不应出现在 HTML 中（注释中也不应有运行时代码）
+        assert "Storage" not in html or "OW.prototype" in html  # OW.prototype 是 WS 拦截器的
+        # 删除所有路径中的 napcat_connector 后，不应再有 napcat_ 前缀
+        assert "napcat_" not in html.replace("napcat_connector", "")
+
