@@ -69,10 +69,18 @@ class NapcatConnectorPlugin(BasePlugin):
 
     @register.api("GET", "/entry", auth=False)
     async def proxy_entry(self):
-        """动态重定向入口：每次请求读取最新配置，拼 token 后 302 跳转到代理首页"""
+        """动态重定向入口：每次请求生成新版本号，拼 token 后 302 跳转到代理首页
+
+        每次请求都更新 self._cache_buster，确保浏览器每次刷新都放弃缓存的
+        旧 JS/CSS。这对于代码变更后的热重载至关重要：即使插件模块未被重新
+        导入，只要 _proxy 方法中的逻辑变了，新的版本段会强制浏览器重新请求。
+        """
+        self._cache_buster = str(int(time.time() * 1000))
         token = self.plugin_cfg.get("webui_token", "")
         url = build_entry_url(PROXY_PREFIX, self._cache_buster, token)
-        return RedirectResponse(url=url, status_code=302)
+        resp = RedirectResponse(url=url, status_code=302)
+        resp.headers["cache-control"] = "no-store"
+        return resp
 
     # 循环注册所有 HTTP 方法（利用默认参数绑定避免闭包陷阱）
     for _method in HTTP_METHODS:

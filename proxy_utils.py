@@ -159,18 +159,34 @@ def build_inject_html(proxy_prefix: str, cache_buster: str, ws_proxy_prefix: str
     """生成注入到 HTML <head> 的完整内容
 
     包含：
-    1. <base> 标签 — 将所有相对 URL 解析为代理路径
-    2. localStorage 隔离 — 防止 iframe 与主窗口的 Storage 冲突
-    3. Service Worker 清理 — 移除旧 SW 缓存
-    4. WebSocket 拦截器 — 确保所有 WS 经 KiraAI 代理
+    1. <base> 标签 - 将所有相对 URL 解析为代理路径
+    2. localStorage 迁移 - 将旧 napcat_ 前缀的数据还原回原始 key
+    3. Service Worker 清理 - 移除旧 SW 缓存
+    4. WebSocket 拦截器 - 确保所有 WS 经 KiraAI 代理
     """
     base_href = f"{proxy_prefix}/_v{cache_buster}/"
 
-    # 启动脚本：Service Worker 清理
-    # （无 localStorage 隔离：同源 iframe 共享 Storage.prototype，
-    #  且 NapCat 的 theme/localStorage key 与 KiraAI 无冲突）
+    # 启动脚本：
+    # - localStorage 迁移：旧版插件的隔离脚本把所有 key 加了 napcat_ 前缀，
+    #   导致用户设置（如 napcat_theme="dark"）与 NapCat 读取的 key（theme）不匹配。
+    #   迁移逻辑把 napcat_xxx 还原回 xxx。前缀版本优先（它是用户通过旧隔离脚本
+    #   主动设的值），覆盖无前缀的默认值。
+    #   只在还有 napcat_ 前缀 key 时执行（迁移一次后自动清除）。
+    # - Service Worker 清理
     bootstrap_js = (
         '<script>'
+        '(function(){'
+        'var p="napcat_";'
+        'var keys=[];'
+        'for(var i=0;i<localStorage.length;i++){'
+        'var k=localStorage.key(i);'
+        'if(k&&k.indexOf(p)===0){keys.push(k)}'
+        '}'
+        'keys.forEach(function(k){'
+        'var nk=k.substring(p.length);'
+        'localStorage.setItem(nk,localStorage.getItem(k));'
+        'localStorage.removeItem(k)'
+        '})})();'
         '(function(){if(navigator&&navigator.serviceWorker)'
         'navigator.serviceWorker.getRegistrations().then(function(rs){'
         'rs.forEach(function(r){r.unregister()})}).catch(function(){})})();'

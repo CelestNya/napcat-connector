@@ -358,16 +358,12 @@ class TestApiContract:
         from proxy_utils import build_inject_html, PROXY_PREFIX, WS_PROXY_PREFIX
         html = build_inject_html(PROXY_PREFIX, "test_cb", WS_PROXY_PREFIX)
         # 确保没有 Storage.prototype 修改代码
-        assert "prototype" not in html or "OW.prototype" in html  # OW.prototype 是 WS 拦截器的
-        # 确保没有 napcat_ 前缀隔离脚本（只有 URL 路径中的 napcat_connector）
-        assert "napcat_" not in html.replace("napcat_connector", "")
+        assert "Storage.prototype" not in html
 
-    def test_inject_no_longer_isolation(self):
-        """注入 HTML 不应包含 localStorage 隔离脚本（会污染父窗口 localStorage）"""
+    def test_inject_has_migration_script(self):
+        """注入 HTML 应包含 localStorage 迁移脚本（napcat_ 前缀 -> 原始 key）"""
         from proxy_utils import build_inject_html, PROXY_PREFIX, WS_PROXY_PREFIX
         html = build_inject_html(PROXY_PREFIX, "test_cb", WS_PROXY_PREFIX)
-        # Storage.prototype 不应出现在 HTML 中（注释中也不应有运行时代码）
-        assert "Storage" not in html or "OW.prototype" in html  # OW.prototype 是 WS 拦截器的
-        # 删除所有路径中的 napcat_connector 后，不应再有 napcat_ 前缀
-        assert "napcat_" not in html.replace("napcat_connector", "")
+        assert "napcat_" in html  # 迁移脚本引用 napcat_ 前缀
+        assert "localStorage.removeItem" in html  # 迁移后删除旧 key
 

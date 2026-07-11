@@ -324,11 +324,15 @@ class TestBuildInjectHtml:
         html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)
         assert f'<base href="{PROXY_PREFIX}/_v{_CB}/">' in html
 
-    def test_contains_localstorage_isolation(self):
-        """localStorage 隔离不再使用（同源 iframe 共享 Storage.prototype）"""
-        # 确保隔离脚本已被移除（不再修 Storage.prototype）
+    def test_contains_localstorage_migration(self):
+        """应包含 localStorage 迁移脚本（napcat_ 前缀还原），不含隔离脚本"""
         html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)
+        # 迁移脚本：把 napcat_ 前缀的 key 还原
+        assert 'napcat_' in html
+        assert 'localStorage.removeItem' in html
+        # 不应有旧的隔离脚本
         assert 'this===ls' not in html
+        assert 'Storage.prototype' not in html
 
     def test_contains_sw_cleanup(self):
         html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)
