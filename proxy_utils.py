@@ -160,33 +160,57 @@ def build_inject_html(proxy_prefix: str, cache_buster: str, ws_proxy_prefix: str
 
     包含：
     1. <base> 标签 - 将所有相对 URL 解析为代理路径
-    2. localStorage 迁移 - 将旧 napcat_ 前缀的数据还原回原始 key
+    2. localStorage 隔离 - 用 Object.defineProperty 替换 iframe 的 localStorage
+       为带前缀的代理对象，只影响 iframe 内部，不影响主窗口
     3. Service Worker 清理 - 移除旧 SW 缓存
     4. WebSocket 拦截器 - 确保所有 WS 经 KiraAI 代理
     """
     base_href = f"{proxy_prefix}/_v{cache_buster}/"
 
-    # 启动脚本：
-    # - localStorage 迁移：旧版插件的隔离脚本把所有 key 加了 napcat_ 前缀，
-    #   导致用户设置（如 napcat_theme="dark"）与 NapCat 读取的 key（theme）不匹配。
-    #   迁移逻辑把 napcat_xxx 还原回 xxx。前缀版本优先（它是用户通过旧隔离脚本
-    #   主动设的值），覆盖无前缀的默认值。
-    #   只在还有 napcat_ 前缀 key 时执行（迁移一次后自动清除）。
-    # - Service Worker 清理
+    # localStorage 隔离 + SW 清理
+    # 用 Object.defineProperty 在 iframe 的 window 上创建 localStorage 代理。
+    # 代理对象内部用 napcat_ 前缀读写真实 localStorage，对 iframe 内 JS 透明。
+    # 关键：不修改 Storage.prototype，不影响主窗口的 localStorage 访问。
+    #
+    # 迁移逻辑：把无前缀的 key（旧数据或 NapCat 默认值）复制到 napcat_ 前缀，
+    # 只在 napcat_ 前缀 key 不存在时执行（不覆盖已有的隔离数据）。
+    # 不删除任何 key（代理只读写 napcat_ 前缀的 key）。
     bootstrap_js = (
         '<script>'
         '(function(){'
         'var p="napcat_";'
-        'var keys=[];'
-        'for(var i=0;i<localStorage.length;i++){'
-        'var k=localStorage.key(i);'
-        'if(k&&k.indexOf(p)===0){keys.push(k)}'
+        'var _ls=window.localStorage;'
+        # 迁移：把无前缀 key 复制到 napcat_ 前缀（仅当 napcat_ 版本不存在时）
+        'for(var i=0;i<_ls.length;i++){'
+        'var k=_ls.key(i);'
+        'if(k&&k.indexOf(p)!==0&&k!=="napcat_connector"){'
+        'if(_ls.getItem(p+k)===null){_ls.setItem(p+k,_ls.getItem(k))}'
         '}'
-        'keys.forEach(function(k){'
-        'var nk=k.substring(p.length);'
-        'localStorage.setItem(nk,localStorage.getItem(k));'
-        'localStorage.removeItem(k)'
-        '})})();'
+        '}'
+        # 创建代理 localStorage
+        'var proxy={'
+        'getItem:function(n){return _ls.getItem(p+n)},'
+        'setItem:function(n,v){_ls.setItem(p+n,v)},'
+        'removeItem:function(n){_ls.removeItem(p+n)},'
+        'clear:function(){'
+        'var ks=[];'
+        'for(var i=0;i<_ls.length;i++){var k=_ls.key(i);if(k&&k.indexOf(p)===0)ks.push(k)}'
+        'ks.forEach(function(k){_ls.removeItem(k)})'
+        '},'
+        'key:function(i){'
+        'var ks=[];'
+        'for(var j=0;j<_ls.length;j++){var k=_ls.key(j);if(k&&k.indexOf(p)===0)ks.push(k.substring(p.length))}'
+        'return ks[i]'
+        '},'
+        'get length(){'
+        'var c=0;'
+        'for(var i=0;i<_ls.length;i++){var k=_ls.key(i);if(k&&k.indexOf(p)===0)c++}'
+        'return c'
+        '}'
+        '};'
+        # 用 defineProperty 替换 window.localStorage（不影响 Storage.prototype）
+        'try{Object.defineProperty(window,"localStorage",{value:proxy,writable:false,configurable:false})}catch(e){}'
+        '})();'
         '(function(){if(navigator&&navigator.serviceWorker)'
         'navigator.serviceWorker.getRegistrations().then(function(rs){'
         'rs.forEach(function(r){r.unregister()})}).catch(function(){})})();'

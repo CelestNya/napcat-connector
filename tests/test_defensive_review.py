@@ -360,10 +360,10 @@ class TestApiContract:
         # 确保没有 Storage.prototype 修改代码
         assert "Storage.prototype" not in html
 
-    def test_inject_has_migration_script(self):
-        """注入 HTML 应包含 localStorage 迁移脚本（napcat_ 前缀 -> 原始 key）"""
+    def test_inject_uses_defineproperty_isolation(self):
+        """注入 HTML 应使用 Object.defineProperty 隔离 localStorage（不影响主窗口）"""
         from proxy_utils import build_inject_html, PROXY_PREFIX, WS_PROXY_PREFIX
         html = build_inject_html(PROXY_PREFIX, "test_cb", WS_PROXY_PREFIX)
-        assert "napcat_" in html  # 迁移脚本引用 napcat_ 前缀
-        assert "localStorage.removeItem" in html  # 迁移后删除旧 key
+        assert 'Object.defineProperty(window,"localStorage"' in html
+        assert "napcat_" in html  # 前缀隔离
 

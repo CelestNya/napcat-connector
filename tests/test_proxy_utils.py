@@ -324,14 +324,13 @@ class TestBuildInjectHtml:
         html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)
         assert f'<base href="{PROXY_PREFIX}/_v{_CB}/">' in html
 
-    def test_contains_localstorage_migration(self):
-        """应包含 localStorage 迁移脚本（napcat_ 前缀还原），不含隔离脚本"""
+    def test_contains_localstorage_isolation(self):
+        """应包含 localStorage 隔离（defineProperty 代理，不修改 prototype）"""
         html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)
-        # 迁移脚本：把 napcat_ 前缀的 key 还原
-        assert 'napcat_' in html
-        assert 'localStorage.removeItem' in html
-        # 不应有旧的隔离脚本
-        assert 'this===ls' not in html
+        # 用 defineProperty 替换 window.localStorage
+        assert 'Object.defineProperty(window,"localStorage"' in html
+        assert 'napcat_' in html  # 前缀
+        # 不应修改 Storage.prototype（会污染主窗口）
         assert 'Storage.prototype' not in html
 
     def test_contains_sw_cleanup(self):
