@@ -8,7 +8,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import time
 import asyncio
 import websockets
 from fastapi import Request, Response, WebSocket
@@ -32,19 +31,17 @@ from proxy_utils import (
     HttpClientManager,
 )
 
-# 缓存破坏版本号：每次插件加载时生成新值，注入到代理 URL 中，
-# 使浏览器无法复用之前缓存的旧 JS（no-store 只阻止未来缓存，不清除已有缓存）
-_CACHE_BUSTER = str(int(time.time() * 1000))
-
 
 class NapcatConnectorPlugin(BasePlugin):
 
     def __init__(self, ctx: PluginContext, cfg: dict):
         super().__init__(ctx, cfg)
+        self._cache_buster = str(int(time.time() * 1000))
 
     async def initialize(self):
         self._http_mgr = HttpClientManager()
         await self._http_mgr.initialize()
+        self._cache_buster = str(int(time.time() * 1000))
         logger.info("NapCat Connector 已就绪（代理模式）")
 
     async def terminate(self):
@@ -73,7 +70,7 @@ class NapcatConnectorPlugin(BasePlugin):
     async def proxy_entry(self):
         """动态重定向入口：每次请求读取最新配置，拼 token 后 302 跳转到代理首页"""
         token = self.plugin_cfg.get("webui_token", "")
-        url = build_entry_url(PROXY_PREFIX, _CACHE_BUSTER, token)
+        url = build_entry_url(PROXY_PREFIX, self._cache_buster, token)
         return RedirectResponse(url=url, status_code=302)
 
     # 循环注册所有 HTTP 方法（利用默认参数绑定避免闭包陷阱）
@@ -187,7 +184,7 @@ class NapcatConnectorPlugin(BasePlugin):
         if "location" in res_headers:
             loc = res_headers["location"]
             if loc.startswith("/webui") or loc.startswith("/api/"):
-                res_headers["location"] = f"{PROXY_PREFIX}/_v{_CACHE_BUSTER}{loc}"
+                res_headers["location"] = f"{PROXY_PREFIX}/_v{self._cache_buster}{loc}"
 
         # 剥离不兼容的响应头
         res_headers.pop("x-frame-options", None)
@@ -237,7 +234,7 @@ class NapcatConnectorPlugin(BasePlugin):
         if is_text_content(content_type):
             body_str = body.decode("utf-8", errors="replace")
             # 统一重写所有文本内容中的绝对路径
-            body_str = rewrite_paths(body_str, PROXY_PREFIX, _CACHE_BUSTER)
+            body_str = rewrite_paths(body_str, PROXY_PREFIX, self._cache_buster)
             # 禁用 Service Worker 注册（在 JS 中，不在 HTML 中）
             # 代理环境下 SW 会缓存未重写的旧 JS 导致 422
             body_str = body_str.replace(
@@ -246,7 +243,7 @@ class NapcatConnectorPlugin(BasePlugin):
             if "text/html" in content_type:
                 # 注入 <base> 标签 + 启动脚本 + WebSocket 拦截器
                 _inject_html = build_inject_html(
-                    PROXY_PREFIX, _CACHE_BUSTER, WS_PROXY_PREFIX)
+                    PROXY_PREFIX, self._cache_buster, WS_PROXY_PREFIX)
                 body_str = body_str.replace("<head>", f"<head>{_inject_html}")
             body = body_str.encode("utf-8")
 
