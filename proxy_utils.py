@@ -80,6 +80,22 @@ def build_entry_url(proxy_prefix: str, cache_buster: str, token: str) -> str:
     return url
 
 
+def build_direct_entry_url(napcat_base: str, token: str) -> str:
+    """构建直连模式的 entry 重定向 URL（外部 NapCat URL，不带缓存破坏段）
+
+    Args:
+        napcat_base: 如 "http://127.0.0.1:6099"
+        token: WebUI token
+
+    Returns:
+        如 "http://127.0.0.1:6099/webui/?token=xxx"
+    """
+    url = f"{napcat_base.rstrip('/')}/webui/"
+    if token:
+        url += f"?token={token}"
+    return url
+
+
 def is_text_content(content_type: str) -> bool:
     """判断 Content-Type 是否需要执行路径重写"""
     ct_lower = content_type.lower()

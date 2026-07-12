@@ -8,5 +8,11 @@
         "type": "string",
         "default": "",
         "hint": "WebUI 登录 token（留空不传 token）"
+    },
+    "connection_mode": {
+        "type": "string",
+        "default": "proxy",
+        "options": ["proxy", "direct"],
+        "hint": "连接模式：proxy=经 KiraAI 中转（端口不暴露）；direct=iframe 直连 NapCat 端口（⚠️会暴露 6099 到浏览器，且受 iframe sandbox 限制）"
     }
 }

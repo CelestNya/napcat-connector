@@ -156,6 +156,54 @@ Object.defineProperty(window, "localStorage", {
 
 修复：移除 bootstrap 中所有 `removeItem(p+"token")` / `removeItem(p+"jwt_token")`，token 生命周期完全交给 NapCat 自身管理。迁移时仍跳过 token/jwt_token（不把无前缀旧值覆盖到 napcat_ 前缀）。
 
+## 直连模式
+
+从 v0.2.0 起支持**双模式**（`connection_mode` 配置）：
+
+| 模式 | 配置值 | iframe 源 | 端口暴露 | 需注入 |
+|------|--------|-----------|----------|--------|
+| 代理模式（默认） | `proxy` | KiraAI (5267) | 不暴露 | `<base>` + LS 隔离 + WS 拦截 |
+| 直连模式 | `direct` | NapCat (6099) | 暴露到浏览器 | 无需（跨源天然隔离） |
+
+### 架构差异
+
+**代理模式**（原架构）：
+```
+浏览器 iframe → /page/plugin/... → 302 → /entry → 302 → /proxy/_v{ts}/webui/...
+                                                          ↓
+                                                    _proxy → httpx → 127.0.0.1:6099
+```
+- iframe 全程同源 5267
+- KiraAI 中转所有 HTTP/WS/SSE 流量
+- 注入 `<base>` / localStorage 隔离 / WS 拦截器
+
+**直连模式**：
+```
+浏览器 iframe → /page/plugin/... → 302 → /entry → 302 → http://127.0.0.1:6099/webui/
+                                                          ↓
+                                                    浏览器直连 6099
+```
+- iframe 跨源（5267 → 6099），sandbox 仍生效
+- NapCat 自行处理所有流量（SSE、WS、API）
+- 无需 KiraAI 代理、无需 HTML 注入
+- localStorage/ServiceWorker 在 6099 域下独立管理
+
+### 配置切换
+
+在 KiraAI WebUI 插件配置页将 `connection_mode` 改为 `direct`，配置热更新立即生效。
+entry 端点每次请求读取配置决定跳转目标，token 和模式的变更即时生效。
+
+### 已知限制
+
+1. **端口暴露**：浏览器需要能直接访问 NapCat 端口（默认 6099），放弃"端口不暴露"约束
+2. **iframe sandbox**：KiraAI 的 iframe sandbox 属性 (`allow-scripts allow-same-origin allow-forms allow-popups`) 在直连模式仍生效，NapCat 的 `alert/confirm`（缺 `allow-modals`）和文件下载（缺 `allow-downloads`）可能被阻断。经实测，NapCat WebUI 核心功能（控制台、日志、设置、拓展插件）不受影响
+3. **跨源通信**：父窗口（KiraAI）无法通过 JS 访问 iframe 内容 DOM，但 `postMessage` 仍可用
+
+### 性能对比
+
+直连模式省去了代理转发、路径重写、HTML 注入的全部开销，NapCat 资产直接由浏览器加载。
+实测首次渲染速度明显快于代理模式（需 3 次 302 + 服务端拉取 + HTML 重写）。
+
 ## 关键技术决策
 
 ### Service Worker 处理

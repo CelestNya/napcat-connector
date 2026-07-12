@@ -24,6 +24,7 @@ from proxy_utils import (
     rewrite_paths,
     strip_version,
     build_entry_url,
+    build_direct_entry_url,
     is_text_content,
     is_sse_response,
     should_read_body,
@@ -69,12 +70,19 @@ class NapcatConnectorPlugin(BasePlugin):
 
     @register.api("GET", "/entry", auth=False)
     async def proxy_entry(self):
-        """动态重定向入口：每次请求读取最新配置，拼 token 后 302 跳转到代理首页
+        """动态重定向入口：根据 connection_mode 决定跳转到代理路径或外部 NapCat URL
 
-        _cache_buster 在 initialize() 中生成，不在每次请求时更新（避免并发竞态）。
+        - proxy 模式：跳转到内部代理路径（含 _v/ 缓存破坏段 + token）
+        - direct 模式：跳转到外部 NapCat URL（直连，不带缓存破坏段）
+        每次请求读取最新配置，模式/ token 热更新即时生效。
         """
-        token = self.plugin_cfg.get("webui_token", "")
-        url = build_entry_url(PROXY_PREFIX, self._cache_buster, token)
+        if self.plugin_cfg.get("connection_mode", "proxy") == "direct":
+            napcat_base = self.plugin_cfg.get("webui_url", NAPCAT_DEFAULT_BASE)
+            token = self.plugin_cfg.get("webui_token", "")
+            url = build_direct_entry_url(napcat_base, token)
+        else:
+            token = self.plugin_cfg.get("webui_token", "")
+            url = build_entry_url(PROXY_PREFIX, self._cache_buster, token)
         resp = RedirectResponse(url=url, status_code=302)
         resp.headers["cache-control"] = "no-store"
         return resp

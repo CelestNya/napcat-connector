@@ -11,6 +11,7 @@ from proxy_utils import (
     rewrite_paths,
     strip_version,
     build_entry_url,
+    build_direct_entry_url,
     is_text_content,
     is_sse_response,
     should_read_body,
@@ -387,8 +388,27 @@ class TestBuildInjectHtml:
 
 
 # ==============================================================
-# HTTP_METHODS 常量
+# 直连模式 entry URL
 # ==============================================================
+
+class TestBuildDirectEntryUrl:
+    """验证 build_direct_entry_url 构建的直连 URL"""
+
+    def test_with_token(self):
+        url = build_direct_entry_url("http://127.0.0.1:6099", "mytoken")
+        assert url == "http://127.0.0.1:6099/webui/?token=mytoken"
+
+    def test_without_token(self):
+        url = build_direct_entry_url("http://127.0.0.1:6099", "")
+        assert url == "http://127.0.0.1:6099/webui/"
+
+    def test_custom_base(self):
+        url = build_direct_entry_url("http://192.168.1.100:9000", "abc")
+        assert url == "http://192.168.1.100:9000/webui/?token=abc"
+
+    def test_base_with_trailing_slash(self):
+        url = build_direct_entry_url("http://127.0.0.1:6099/", "tok")
+        assert url == "http://127.0.0.1:6099/webui/?token=tok"
 
 class TestHttpMethods:
     """验证 HTTP_METHODS 常量"""
