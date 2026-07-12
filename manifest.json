@@ -5,7 +5,7 @@
     "author": "CelestNya",
     "description": "NapCatQQ 适配器连接器：通过 OneBot 协议连接 NapCatQQ，支持 QQ 消息收发与事件处理",
     "repo": "https://github.com/CelestNya/napcat-connector",
-    "core_version": ">=v2.0.0",
+    "core_version": ">=v2.23.0",
     "tags": ["napcat", "onebot", "qq", "adapter", "connector"],
     "locales": {
         "zh": {
