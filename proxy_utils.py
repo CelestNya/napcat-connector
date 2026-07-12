@@ -174,32 +174,24 @@ def build_inject_html(proxy_prefix: str, cache_buster: str, ws_proxy_prefix: str
     #
     # 迁移逻辑：把无前缀的 key（旧数据或 NapCat 默认值）复制到 napcat_ 前缀，
     # 只在 napcat_ 前缀 key 不存在时执行（不覆盖已有的隔离数据）。
-    # 对 token 和 theme 做 JSON 格式化（NapCat 期望 JSON 字符串格式，
-    # 否则 JSON.parse 失败 -> 认为未登录 -> reload -> 无限闪烁）。
+    # 不做任何格式转换 -- NapCat 自己存什么格式，代理就原样存储。
+    # （之前对 token/theme 做 JSON.stringify 导致 token 被加引号 -> Unauthorized）
     bootstrap_js = (
         '<script>'
         '(function(){'
         'var p="napcat_";'
         'var _ls=window.localStorage;'
-        # NapCat 期望 token/theme 的值是 JSON 字符串（带引号）
-        # 如果值不以 " 开头，需要 JSON.stringify
-        'function fmt(k,v){'
-        'if((k==="token"||k==="theme")&&v&&v.charAt(0)!==\'"\'){'
-        'return JSON.stringify(v)'
-        '}'
-        'return v'
-        '}'
         # 迁移：把无前缀 key 复制到 napcat_ 前缀（仅当 napcat_ 版本不存在时）
         'for(var i=0;i<_ls.length;i++){'
         'var k=_ls.key(i);'
         'if(k&&k.indexOf(p)!==0&&k!=="napcat_connector"){'
-        'if(_ls.getItem(p+k)===null){_ls.setItem(p+k,fmt(k,_ls.getItem(k)))}'
+        'if(_ls.getItem(p+k)===null){_ls.setItem(p+k,_ls.getItem(k))}'
         '}'
         '}'
-        # 创建代理 localStorage
+        # 创建代理 localStorage（原样透传，不转换格式）
         'var proxy={'
         'getItem:function(n){return _ls.getItem(p+n)},'
-        'setItem:function(n,v){_ls.setItem(p+n,fmt(n,v))},'
+        'setItem:function(n,v){_ls.setItem(p+n,v)},'
         'removeItem:function(n){_ls.removeItem(p+n)},'
         'clear:function(){'
         'var ks=[];'
