@@ -175,16 +175,23 @@ def build_inject_html(proxy_prefix: str, cache_buster: str, ws_proxy_prefix: str
     # 迁移逻辑：把无前缀的 key（旧数据或 NapCat 默认值）复制到 napcat_ 前缀，
     # 只在 napcat_ 前缀 key 不存在时执行（不覆盖已有的隔离数据）。
     # 不做任何格式转换 -- NapCat 自己存什么格式，代理就原样存储。
-    # （之前对 token/theme 做 JSON.stringify 导致 token 被加引号 -> Unauthorized）
+    #
+    # 跳过 token/jwt_token：旧隔离脚本遗留的 napcat_token 可能是过期凭证，
+    # 迁移它会导致 NapCat 用过期 token -> 401 -> axios 拦截器重试 -> 无限闪烁。
+    # 清除旧的 napcat_token/napcat_jwt_token，强制 NapCat 用 URL token 重新登录。
     bootstrap_js = (
         '<script>'
         '(function(){'
         'var p="napcat_";'
         'var _ls=window.localStorage;'
+        # 清除旧隔离脚本遗留的过期凭证
+        '_ls.removeItem(p+"token");'
+        '_ls.removeItem(p+"jwt_token");'
         # 迁移：把无前缀 key 复制到 napcat_ 前缀（仅当 napcat_ 版本不存在时）
+        # 跳过 token 和 jwt_token（上面已清除，让 NapCat 重新登录）
         'for(var i=0;i<_ls.length;i++){'
         'var k=_ls.key(i);'
-        'if(k&&k.indexOf(p)!==0&&k!=="napcat_connector"){'
+        'if(k&&k.indexOf(p)!==0&&k!=="napcat_connector"&&k!=="token"&&k!=="jwt_token"){'
         'if(_ls.getItem(p+k)===null){_ls.setItem(p+k,_ls.getItem(k))}'
         '}'
         '}'
