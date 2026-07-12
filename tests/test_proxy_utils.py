@@ -410,6 +410,21 @@ class TestBuildDirectEntryUrl:
         url = build_direct_entry_url("http://127.0.0.1:6099/", "tok")
         assert url == "http://127.0.0.1:6099/webui/?token=tok"
 
+    def test_base_with_webui_suffix(self):
+        """用户误带 /webui 路径时应剥离，避免 /webui/webui/"""
+        url = build_direct_entry_url("http://127.0.0.1:6099/webui", "tok")
+        assert url == "http://127.0.0.1:6099/webui/?token=tok"
+
+    def test_base_with_webui_slash_suffix(self):
+        url = build_direct_entry_url("http://127.0.0.1:6099/webui/", "tok")
+        assert url == "http://127.0.0.1:6099/webui/?token=tok"
+
+    def test_token_with_special_chars(self):
+        """token 含 &/= 等特殊字符应被 URL 编码，避免破坏 query string"""
+        url = build_direct_entry_url("http://127.0.0.1:6099", "a&b=c d")
+        assert url == "http://127.0.0.1:6099/webui/?token=a%26b%3Dc+d"
+
+
 class TestHttpMethods:
     """验证 HTTP_METHODS 常量"""
 

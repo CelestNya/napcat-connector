@@ -38,7 +38,7 @@ class TestRewritePathsEdgeCases:
         assert result == src
 
     def test_newline_injection(self):
-        """换行符（\s）会触发正则匹配，路径被重写（已知行为）"""
+        r"""换行符（\s）会触发正则匹配，路径被重写（已知行为）"""
         src = '"/api\n/login"'
         result = rewrite_paths(src, PROXY_PREFIX, _CB)
         # 注：正则 (?=[/"'\s;)]) 中的 \s 包含 \n，所以 /api\n 被匹配。
@@ -156,7 +156,8 @@ class TestBuildEntryUrlEdgeCases:
 
     def test_token_with_special_chars(self):
         url = build_entry_url(PROXY_PREFIX, _CB, "token+&?=")
-        assert "token+&?=" in url  # token 原样放在 query param 中，未编码
+        # token 应被 URL 编码，特殊字符不破坏 query string
+        assert "token%2B%26%3F%3D" in url
 
     def test_empty_token_still_has_timestamp(self):
         url = build_entry_url(PROXY_PREFIX, _CB, "")
@@ -169,7 +170,8 @@ class TestBuildEntryUrlEdgeCases:
 
     def test_unicode_token(self):
         url = build_entry_url(PROXY_PREFIX, _CB, "登录token")
-        assert "登录token" in url  # 注意：HTMX 要求 URL 中的非 ASCII 应编码
+        # 非 ASCII 字符应被 URL 编码
+        assert "%E7%99%BB%E5%BD%95token" in url
 
 
 # ===================================================================

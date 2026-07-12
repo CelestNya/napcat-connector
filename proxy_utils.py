@@ -8,7 +8,7 @@ NapCat Connector — 纯函数工具模块
 import re
 import time
 import httpx
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode
 
 # ===== 常量 =====
 PROXY_PREFIX = "/api/plugin/napcat_connector/proxy"
@@ -76,7 +76,7 @@ def build_entry_url(proxy_prefix: str, cache_buster: str, token: str) -> str:
     """
     url = f"{proxy_prefix}/_v{cache_buster}/webui/?_t={int(time.time() * 1000)}"
     if token:
-        url += f"&token={token}"
+        url += "&" + urlencode({"token": token})
     return url
 
 
@@ -84,15 +84,19 @@ def build_direct_entry_url(napcat_base: str, token: str) -> str:
     """构建直连模式的 entry 重定向 URL（外部 NapCat URL，不带缓存破坏段）
 
     Args:
-        napcat_base: 如 "http://127.0.0.1:6099"
+        napcat_base: 如 "http://127.0.0.1:6099"（仅 host:port，勿带 /webui 路径）
         token: WebUI token
 
     Returns:
         如 "http://127.0.0.1:6099/webui/?token=xxx"
     """
-    url = f"{napcat_base.rstrip('/')}/webui/"
+    # 剥离用户误带的 /webui 路径尾缀（避免拼成 /webui/webui/）
+    base = napcat_base.rstrip("/")
+    if base.endswith("/webui"):
+        base = base[:-len("/webui")]
+    url = f"{base}/webui/"
     if token:
-        url += f"?token={token}"
+        url += "?" + urlencode({"token": token})
     return url
 
 
