@@ -101,9 +101,45 @@ NapCat 的实时状态/日志使用 EventSource。代理识别 `text/event-strea
 NapCat 的 JS 文件名带 hash，版本不变则 hash 不变，浏览器会用缓存旧版本。
 
 **三层防护**：
-1. **版本段** `_v{timestamp}`：每次插件加载生成新值，URL 不同，缓存无效
-2. **`Cache-Control: no-store`**：禁止浏览器存储
+1. **版本段** `_v{timestamp}`：每次插件初始化和 entry 请求时生成新值，URL 不同，缓存无效
+2. **`Cache-Control: no-store`**：禁止浏览器存储（302 重定向也需要，防止浏览器缓存旧的 entry 响应）
 3. **剥离 ETag/Last-Modified**：避免 304 条件请求
+
+### localStorage 隔离（defineProperty）
+
+NapCat 和 KiraAI 同源（`127.0.0.1:5267`），共享同一个 `localStorage` 对象。两者如果使用相同的 key（如 `theme`、`token`、`options`），会直接互相污染。
+
+**方案**：在 iframe HTML 的 `<head>` 中注入 `Object.defineProperty` 脚本，用代理对象替换 iframe 的 `window.localStorage`：
+
+```javascript
+var proxy = {
+    getItem: function(n) { return _ls.getItem(p + n); },         // p = "napcat_"
+    setItem: function(n, v) { _ls.setItem(p + n, v); },
+    removeItem: function(n) { _ls.removeItem(p + n); },
+    ...
+};
+Object.defineProperty(window, "localStorage", {
+    value: proxy, writable: false, configurable: false
+});
+```
+
+- 所有 iframe 内的 `localStorage.getItem("theme")` → 实际读写 `napcat_theme`
+- 主窗口 KiraAI 的 `localStorage.getItem("theme")` → 不变（因为主窗口的 `localStorage` 没被替换）
+
+**关键经验**：
+- ❌ 不要修改 `Storage.prototype` —— 所有同源窗口共享原型，会污染主窗口
+- ❌ 不要对存储值做格式转换（JSON.stringify）—— token 是 base64，加引号后 NapCat auth 解码失败 → 401 循环
+- ❌ 不要迁移 token/jwt_token —— 旧隔离脚本遗留的过期凭证会导致 401 无限重试
+- ✅ 使用 `Object.defineProperty(window, "localStorage", ...)` 只影响当前 iframe
+
+**历史回溯**：
+
+| 阶段 | 方案 | 问题 |
+|------|------|------|
+| 第一阶段 | 修改 `Storage.prototype` | 污染主窗口，KiraAI localStorage 也被前缀化 |
+| 第二阶段 | 直接删除隔离 | theme/token key 直接冲突 |
+| 第三阶段 | `defineProperty` + `fmt()` 格式化 | fmt 给 token 加 JSON 引号 → 401 循环 |
+| 第四阶段 ✅ | `defineProperty` + 清除过期 token | 稳定隔离，不污染主窗口 |
 
 ## 关键技术决策
 
