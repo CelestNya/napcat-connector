@@ -158,7 +158,7 @@ Object.defineProperty(window, "localStorage", {
 
 ## 直连模式
 
-从 v0.2.0 起支持**双模式**（`connection_mode` 配置）：
+从 v0.2.0 起支持**双模式**（`mode` 配置）：
 
 | 模式 | 配置值 | iframe 源 | 端口暴露 | 需注入 |
 |------|--------|-----------|----------|--------|
@@ -190,7 +190,7 @@ Object.defineProperty(window, "localStorage", {
 
 ### 配置切换
 
-在 KiraAI WebUI 插件配置页将 `connection_mode` 改为 `direct`，配置热更新立即生效。
+在 KiraAI WebUI 插件配置页将 `mode` 改为 `direct`，配置热更新立即生效。
 entry 端点每次请求读取配置决定跳转目标，token 和模式的变更即时生效。
 
 ### 已知限制

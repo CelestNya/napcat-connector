@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
  * ===============
  *
  * 验证直连模式下 iframe 能否正常加载 NapCat WebUI。
- * 需先在 KiraAI 插件配置中将 connection_mode 设为 "direct"。
+ * 需先在 KiraAI 插件配置中将 mode 设为 "direct"。
  *
  * 验证维度：
  *   1. iframe URL 是否最终落在 127.0.0.1:6099

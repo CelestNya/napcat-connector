@@ -70,13 +70,13 @@ class NapcatConnectorPlugin(BasePlugin):
 
     @register.api("GET", "/entry", auth=False)
     async def proxy_entry(self):
-        """动态重定向入口：根据 connection_mode 决定跳转到代理路径或外部 NapCat URL
+        """动态重定向入口：根据 mode 决定跳转到代理路径或外部 NapCat URL
 
         - proxy 模式：跳转到内部代理路径（含 _v/ 缓存破坏段 + token）
         - direct 模式：跳转到外部 NapCat URL（直连，不带缓存破坏段）
         每次请求读取最新配置，模式/ token 热更新即时生效。
         """
-        if self.plugin_cfg.get("connection_mode", "proxy") == "direct":
+        if self.plugin_cfg.get("mode", "proxy") == "direct":
             napcat_base = self.plugin_cfg.get("webui_url", NAPCAT_DEFAULT_BASE)
             token = self.plugin_cfg.get("webui_token", "")
             url = build_direct_entry_url(napcat_base, token)
