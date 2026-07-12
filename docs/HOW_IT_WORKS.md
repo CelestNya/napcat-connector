@@ -127,10 +127,12 @@ Object.defineProperty(window, "localStorage", {
 - 主窗口 KiraAI 的 `localStorage.getItem("theme")` → 不变（因为主窗口的 `localStorage` 没被替换）
 
 **关键经验**：
-- ❌ 不要修改 `Storage.prototype` —— 所有同源窗口共享原型，会污染主窗口
-- ❌ 不要对存储值做格式转换（JSON.stringify）—— token 是 base64，加引号后 NapCat auth 解码失败 → 401 循环
-- ❌ 不要迁移 token/jwt_token —— 旧隔离脚本遗留的过期凭证会导致 401 无限重试
+- ❌ 不要修改 `Storage.prototype` -- 所有同源窗口共享原型，会污染主窗口
+- ❌ 不要对存储值做格式转换（JSON.stringify）-- token 是 base64，加引号后 NapCat auth 解码失败 -> 401 循环
+- ❌ 不要迁移 token/jwt_token -- 旧隔离脚本遗留的过期凭证会导致 401 无限重试
+- ❌ **不要主动 `removeItem("napcat_token")`** -- 所有经代理的 iframe（含 NapCat 拓展插件嵌套 iframe）同源共享同一真实 localStorage，嵌套 iframe 加载时的 bootstrap 会删掉主 iframe 的有效 token -> NapCat 检测 token 丢失 -> 跳 web_login -> 拓展页面 401
 - ✅ 使用 `Object.defineProperty(window, "localStorage", ...)` 只影响当前 iframe
+- ✅ token 的生命周期完全交给 NapCat 自身管理（URL token 登录 -> 写 localStorage），代理只负责隔离前缀
 
 **历史回溯**：
 
@@ -138,8 +140,21 @@ Object.defineProperty(window, "localStorage", {
 |------|------|------|
 | 第一阶段 | 修改 `Storage.prototype` | 污染主窗口，KiraAI localStorage 也被前缀化 |
 | 第二阶段 | 直接删除隔离 | theme/token key 直接冲突 |
-| 第三阶段 | `defineProperty` + `fmt()` 格式化 | fmt 给 token 加 JSON 引号 → 401 循环 |
-| 第四阶段 ✅ | `defineProperty` + 清除过期 token | 稳定隔离，不污染主窗口 |
+| 第三阶段 | `defineProperty` + `fmt()` 格式化 | fmt 给 token 加 JSON 引号 -> 401 循环 |
+| 第四阶段 | `defineProperty` + 主动清除 token | 主页面稳定，但拓展页面 401（见下） |
+| 第五阶段 ✅ | `defineProperty` + 不动 token | 完全稳定，token 生命周期交还 NapCat |
+
+**第五阶段修复（拓展页面 401）**：
+
+第四阶段的 bootstrap_js 含 `_ls.removeItem(p+"token")`，本意是清除旧隔离脚本遗留的过期凭证。但所有经代理的 iframe 同源共享 localStorage，点击 NapCat "扩展" 时加载的拓展插件 iframe（如 Stapxs QQ Lite dashboard）也会执行 bootstrap，**删除了主 iframe 刚写入的有效 `napcat_token`**。因果链：
+
+```
+点击扩展 -> 拓展 iframe 加载 -> bootstrap removeItem("napcat_token")
+-> 主 iframe 的 NapCat JS 检测 token 丢失 -> setItem("token","") -> 跳 web_login
+-> 拓展页面 401
+```
+
+修复：移除 bootstrap 中所有 `removeItem(p+"token")` / `removeItem(p+"jwt_token")`，token 生命周期完全交给 NapCat 自身管理。迁移时仍跳过 token/jwt_token（不把无前缀旧值覆盖到 napcat_ 前缀）。
 
 ## 关键技术决策
 

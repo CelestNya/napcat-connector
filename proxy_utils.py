@@ -176,19 +176,20 @@ def build_inject_html(proxy_prefix: str, cache_buster: str, ws_proxy_prefix: str
     # 只在 napcat_ 前缀 key 不存在时执行（不覆盖已有的隔离数据）。
     # 不做任何格式转换 -- NapCat 自己存什么格式，代理就原样存储。
     #
-    # 跳过 token/jwt_token：旧隔离脚本遗留的 napcat_token 可能是过期凭证，
-    # 迁移它会导致 NapCat 用过期 token -> 401 -> axios 拦截器重试 -> 无限闪烁。
-    # 清除旧的 napcat_token/napcat_jwt_token，强制 NapCat 用 URL token 重新登录。
+    # 绝不主动删除 token 类 key：
+    # 所有经代理的 iframe（含 NapCat 拓展插件嵌套 iframe）同源，共享同一真实
+    # localStorage。若 bootstrap 主动 removeItem("napcat_token")，嵌套拓展 iframe
+    # 加载时会删掉主 iframe 刚写入的有效 token -> NapCat 检测 token 丢失 ->
+    # setItem("token","") -> 跳 web_login -> 拓展页面 401。
+    # token 的生命周期完全交给 NapCat 自身管理（URL token 登录 -> 写 localStorage）。
+    # 迁移时跳过 token/jwt_token，避免把无前缀的旧/空 token 覆盖到 napcat_ 前缀。
     bootstrap_js = (
         '<script>'
         '(function(){'
         'var p="napcat_";'
         'var _ls=window.localStorage;'
-        # 清除旧隔离脚本遗留的过期凭证
-        '_ls.removeItem(p+"token");'
-        '_ls.removeItem(p+"jwt_token");'
         # 迁移：把无前缀 key 复制到 napcat_ 前缀（仅当 napcat_ 版本不存在时）
-        # 跳过 token 和 jwt_token（上面已清除，让 NapCat 重新登录）
+        # 跳过 token/jwt_token：让 NapCat 自行管理凭证生命周期
         'for(var i=0;i<_ls.length;i++){'
         'var k=_ls.key(i);'
         'if(k&&k.indexOf(p)!==0&&k!=="napcat_connector"&&k!=="token"&&k!=="jwt_token"){'

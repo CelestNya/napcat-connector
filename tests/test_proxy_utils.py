@@ -350,6 +350,41 @@ class TestBuildInjectHtml:
         script_idx = html.index('<script>')
         assert base_idx < script_idx, "<base> 应在 <script> 之前"
 
+    # ----------------------------------------------------------
+    # 回归：嵌套 iframe 不得误删共享 localStorage 中的有效登录态
+    # ----------------------------------------------------------
+    # 背景：所有经代理的 iframe（含 NapCat 拓展插件嵌套 iframe）同源，
+    # 共享同一真实 localStorage。bootstrap_js 若主动 removeItem("napcat_token")，
+    # 嵌套 iframe 加载时会删掉主 iframe 刚写入的有效 token -> NapCat 检测到
+    # token 丢失 -> setItem("token","") -> 跳 web_login -> 拓展页面 401。
+    # 修复：bootstrap_js 绝不能主动删除 token 类凭证。
+
+    def test_no_remove_napcat_token(self):
+        """不得主动删除 napcat_token（会误伤嵌套 iframe 共享的登录态）"""
+        html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)
+        assert 'removeItem(p+"token")' not in html, (
+            "bootstrap_js 不得主动 removeItem(napcat_token)：嵌套 iframe 共享 "
+            "localStorage，会删除主 iframe 的有效 token 导致拓展页面 401"
+        )
+
+    def test_no_remove_napcat_jwt_token(self):
+        """不得主动删除 napcat_jwt_token（同理）"""
+        html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)
+        assert 'removeItem(p+"jwt_token")' not in html, (
+            "bootstrap_js 不得主动 removeItem(napcat_jwt_token)"
+        )
+
+    def test_no_unconditional_token_purge(self):
+        """不得包含任何无条件清除 token 类 key 的逻辑"""
+        html = build_inject_html(PROXY_PREFIX, _CB, WS_PROXY_PREFIX)
+        # 扫描所有 removeItem(p+...) 调用，p="napcat_"
+        import re
+        purges = re.findall(r'removeItem\(p\+"([^"]+)"\)', html)
+        token_like = [k for k in purges if "token" in k.lower()]
+        assert token_like == [], (
+            f"bootstrap_js 不得主动清除 token 类 key：{token_like}"
+        )
+
 
 # ==============================================================
 # HTTP_METHODS 常量

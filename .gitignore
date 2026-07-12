@@ -21,3 +21,9 @@ data/
 
 # Config
 config/
+
+# Node (Playwright 诊断脚本依赖)
+node_modules/
+package-lock.json
+test-results/
+.playwright-mcp/
