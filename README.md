@@ -1,6 +1,6 @@
 # NapCat Connector
 
-KiraAI 插件：反向代理 / 直连双模式接入 NapCat WebUI。
+在 KiraAI 内嵌 NapCat 控制台，支持反向代理 / 直连双模式接入 NapCat WebUI。
 
 ## 安装
 
