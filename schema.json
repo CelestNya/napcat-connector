@@ -1,18 +1,30 @@
 {
     "mode": {
         "type": "string",
+        "name": "连接模式",
         "default": "proxy",
         "options": ["proxy", "direct"],
-        "hint": "连接模式：proxy=后端转发请求（端口不暴露，更安全）；direct=前端直连 NapCat 端口（更快，但暴露端口到浏览器且受 iframe sandbox 限制）"
+        "hint": "连接模式：proxy=后端转发请求（端口不暴露，更安全）；direct=前端直连 NapCat 端口（更快，但暴露端口到浏览器且受 iframe sandbox 限制）",
+        "locales": {
+            "zh": { "name": "连接模式", "hint": "连接模式：proxy=后端转发请求（端口不暴露，更安全）；direct=前端直连 NapCat 端口（更快，但暴露端口到浏览器且受 iframe sandbox 限制）" }
+        }
     },
     "webui_url": {
         "type": "string",
+        "name": "NapCat 地址",
         "default": "http://127.0.0.1:6099",
-        "hint": "NapCat 地址。直连模式时浏览器前端直接连接；代理模式时后端转发请求到此地址"
+        "hint": "NapCat 地址。直连模式时浏览器前端直接连接；代理模式时后端转发请求到此地址",
+        "locales": {
+            "zh": { "name": "NapCat 地址", "hint": "NapCat 地址。直连模式时浏览器前端直接连接；代理模式时后端转发请求到此地址" }
+        }
     },
     "webui_token": {
         "type": "string",
+        "name": "登录 Token",
         "default": "",
-        "hint": "登录 Token。填写后自动登录 NapCat WebUI；留空则不自动登录"
+        "hint": "登录 Token。填写后自动登录 NapCat WebUI；留空则不自动登录",
+        "locales": {
+            "zh": { "name": "登录 Token", "hint": "登录 Token。填写后自动登录 NapCat WebUI；留空则不自动登录" }
+        }
     }
 }
